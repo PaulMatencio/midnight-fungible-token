@@ -23,6 +23,7 @@ import type { ActivityItem, TokenMetadata, TransactionStatus } from '@/src/types
 import {
   queryIndexerContractState,
   calculateAccountSharesFromLedger,
+  formatBech32Address,
   type IndexerTokenReport,
 } from '@/src/infrastructure/midnight/midnight-indexer-client';
 
@@ -150,6 +151,50 @@ export function deserializeChargedState(jsonStr: string): any {
   return new CompactRuntime.ChargedState(stateVal);
 }
 
+/**
+ * Extracts comprehensive TokenMetadata from decoded ledger state,
+ * computing owner hex, owner Bech32m, and whether caller is the contract owner.
+ */
+export function extractMetadata(
+  decoded: FungibleTokenLedgerState | any | null,
+  currentCaller?: string | null,
+  networkId: string = MIDNIGHT_CONFIG.networkId
+): TokenMetadata {
+  if (!decoded) {
+    return {
+      name: 'Midnight Fungible Token',
+      symbol: 'MFT',
+      decimals: 6,
+      totalSupply: 0n,
+      isInitialized: false,
+      owner: undefined,
+      ownerBech32: undefined,
+      isCallerOwner: false,
+    };
+  }
+
+  const ownerBytes = decoded.owner as Uint8Array | undefined;
+  const ownerHex = ownerBytes && ownerBytes.length === 32 ? bytesToHex(ownerBytes) : undefined;
+  const ownerBech32 = ownerBytes && ownerBytes.length === 32 ? formatBech32Address(ownerBytes, networkId) : undefined;
+
+  let isCallerOwner = false;
+  if (ownerHex && currentCaller) {
+    const callerCleanHex = addressToHex32(currentCaller).toLowerCase();
+    isCallerOwner = callerCleanHex === ownerHex.toLowerCase();
+  }
+
+  return {
+    name: decoded._name || 'Midnight Fungible Token',
+    symbol: decoded._symbol || 'MFT',
+    decimals: Number(decoded._decimals || 6n),
+    totalSupply: decoded._totalSupply || 0n,
+    isInitialized: Boolean(decoded._isInitialized),
+    owner: ownerHex,
+    ownerBech32,
+    isCallerOwner,
+  };
+}
+
 export function useFungibleToken() {
   const { mode, accountAddress, isConnected, extensionApi, refreshBalances } = useWallet();
   const { showToast } = useToast();
@@ -239,8 +284,9 @@ export function useFungibleToken() {
       clientRef.current = client;
 
       const dummyCoinPublicKey = '01'.repeat(32);
+      const initialOwnerBytes = hexToBytes(PRESET_IDENTITIES[0].addressHex);
       const initialPrivateState: FungibleTokenPrivateState = {
-        signingKey: hexToBytes(PRESET_IDENTITIES[0].addressHex),
+        signingKey: initialOwnerBytes,
       };
       privateStateRef.current = initialPrivateState;
 
@@ -248,7 +294,7 @@ export function useFungibleToken() {
         initialPrivateState,
         dummyCoinPublicKey
       );
-      const initResult = client.initialState(constructorCtx);
+      const initResult = client.initialState(constructorCtx, initialOwnerBytes);
       let st = initResult.currentContractState.data;
       let ps = initResult.currentPrivateState;
 
@@ -263,7 +309,7 @@ export function useFungibleToken() {
       st = initRes.context.currentQueryContext.state;
       ps = initRes.context.currentPrivateState;
 
-      // Mint 5M to Alice
+      // Mint 5M to Alice (caller must be owner: Alice)
       circuitCtx = CompactRuntime.createCircuitContext(
         MIDNIGHT_CONFIG.contractAddress,
         dummyCoinPublicKey,
@@ -271,10 +317,10 @@ export function useFungibleToken() {
         ps
       );
       const aliceBytes = hexToBytes(PRESET_IDENTITIES[0].addressHex);
-      const mintRes1 = client.mint(circuitCtx, aliceBytes, 5_000_000n * 10n ** 6n);
+      const mintRes1 = client.mint(circuitCtx, aliceBytes, aliceBytes, 5_000_000n * 10n ** 6n);
       st = mintRes1.context.currentQueryContext.state;
 
-      // Mint 5M to Bob
+      // Mint 5M to Bob (caller must be owner: Alice)
       circuitCtx = CompactRuntime.createCircuitContext(
         MIDNIGHT_CONFIG.contractAddress,
         dummyCoinPublicKey,
@@ -282,7 +328,7 @@ export function useFungibleToken() {
         mintRes1.context.currentPrivateState
       );
       const bobBytes = hexToBytes(PRESET_IDENTITIES[1].addressHex);
-      const mintRes2 = client.mint(circuitCtx, bobBytes, 5_000_000n * 10n ** 6n);
+      const mintRes2 = client.mint(circuitCtx, aliceBytes, bobBytes, 5_000_000n * 10n ** 6n);
       st = mintRes2.context.currentQueryContext.state;
       ps = mintRes2.context.currentPrivateState;
 
@@ -292,13 +338,7 @@ export function useFungibleToken() {
       const decoded = client.queryLedgerStateFromRaw(st);
       setLedgerState(decoded);
       ledgerStateSubjectRef.current.next(decoded);
-      setMetadata({
-        name: decoded._name || 'Midnight Fungible Token',
-        symbol: decoded._symbol || 'MFT',
-        decimals: Number(decoded._decimals || 6n),
-        totalSupply: decoded._totalSupply || 10_000_000n * 10n ** 6n,
-        isInitialized: decoded._isInitialized,
-      });
+      setMetadata(extractMetadata(decoded, PRESET_IDENTITIES[0].addressHex));
     } catch (err) {
       console.warn('[useFungibleToken] Simulated test initialization error:', err);
     }
@@ -330,12 +370,19 @@ export function useFungibleToken() {
           if (cachedMetaRaw) {
             const parsedMeta = JSON.parse(cachedMetaRaw);
             if (parsedMeta && parsedMeta.isInitialized) {
+              const ownerHex = parsedMeta.owner;
+              const isCallerOwner = Boolean(
+                ownerHex && accountAddress && addressToHex32(accountAddress).toLowerCase() === ownerHex.toLowerCase()
+              );
               setMetadata({
                 name: parsedMeta.name || 'Midnight Fungible Token',
                 symbol: parsedMeta.symbol || 'MFT',
                 decimals: Number(parsedMeta.decimals || 6),
                 totalSupply: BigInt(parsedMeta.totalSupply || '0'),
                 isInitialized: true,
+                owner: ownerHex,
+                ownerBech32: parsedMeta.ownerBech32,
+                isCallerOwner,
               });
             }
           }
@@ -353,13 +400,7 @@ export function useFungibleToken() {
 
       setLedgerState(cachedDecoded);
       ledgerStateSubjectRef.current.next(cachedDecoded);
-      setMetadata({
-        name: cachedDecoded._name || 'Midnight Fungible Token',
-        symbol: cachedDecoded._symbol || 'MFT',
-        decimals: Number(cachedDecoded._decimals || 6n),
-        totalSupply: cachedDecoded._totalSupply || 0n,
-        isInitialized: true,
-      });
+      setMetadata(extractMetadata(cachedDecoded, accountAddress));
       console.log('[useFungibleToken] Restored initialized contract state from browser cache:', {
         name: cachedDecoded._name,
         symbol: cachedDecoded._symbol,
@@ -384,13 +425,8 @@ export function useFungibleToken() {
           laceChargedStateRef.current = onChainState.data;
           setLedgerState(decoded);
           ledgerStateSubjectRef.current.next(decoded);
-          setMetadata({
-            name: decoded._name || 'Midnight Fungible Token',
-            symbol: decoded._symbol || 'MFT',
-            decimals: Number(decoded._decimals || 6n),
-            totalSupply: decoded._totalSupply || 0n,
-            isInitialized: true,
-          });
+          const meta = extractMetadata(decoded, accountAddress);
+          setMetadata(meta);
 
           if (typeof window !== 'undefined') {
             try {
@@ -401,11 +437,13 @@ export function useFungibleToken() {
               localStorage.setItem(
                 `${TOKEN_META_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`,
                 JSON.stringify({
-                  name: decoded._name || 'Midnight Fungible Token',
-                  symbol: decoded._symbol || 'MFT',
-                  decimals: Number(decoded._decimals || 6n),
-                  totalSupply: decoded._totalSupply?.toString() || '0',
+                  name: meta.name,
+                  symbol: meta.symbol,
+                  decimals: meta.decimals,
+                  totalSupply: meta.totalSupply.toString(),
                   isInitialized: true,
+                  owner: meta.owner,
+                  ownerBech32: meta.ownerBech32,
                 })
               );
             } catch {}
@@ -421,13 +459,7 @@ export function useFungibleToken() {
           laceChargedStateRef.current = onChainState.data;
           setLedgerState(decoded);
           ledgerStateSubjectRef.current.next(decoded);
-          setMetadata({
-            name: decoded._name || 'Midnight Fungible Token',
-            symbol: decoded._symbol || 'MFT',
-            decimals: Number(decoded._decimals || 6n),
-            totalSupply: 0n,
-            isInitialized: false,
-          });
+          setMetadata(extractMetadata(decoded, accountAddress));
           return;
         }
       }
@@ -445,8 +477,9 @@ export function useFungibleToken() {
     clientRef.current = client;
 
     const dummyCoinPublicKey = addressToHex32(accountAddress);
+    const initialOwnerBytes = hexToBytes(accountAddress || '01'.repeat(32));
     const initialPrivateState: FungibleTokenPrivateState = {
-      signingKey: hexToBytes(accountAddress || '01'.repeat(32)),
+      signingKey: initialOwnerBytes,
     };
     privateStateRef.current = initialPrivateState;
 
@@ -454,7 +487,7 @@ export function useFungibleToken() {
       initialPrivateState,
       dummyCoinPublicKey
     );
-    const initResult = client.initialState(constructorCtx);
+    const initResult = client.initialState(constructorCtx, initialOwnerBytes);
     laceChargedStateRef.current = initResult.currentContractState.data;
     privateStateRef.current = initResult.currentPrivateState;
 
@@ -463,13 +496,7 @@ export function useFungibleToken() {
     ledgerStateSubjectRef.current.next(decoded);
 
     // Default clean uninitialized state for Lace mode
-    setMetadata({
-      name: decoded._name || 'Midnight Fungible Token',
-      symbol: decoded._symbol || 'MFT',
-      decimals: Number(decoded._decimals || 6n),
-      totalSupply: 0n,
-      isInitialized: decoded._isInitialized,
-    });
+    setMetadata(extractMetadata(decoded, accountAddress));
   }, [extensionApi, accountAddress]);
 
   // Query on-chain indexer for full token metadata & account distribution report
@@ -523,6 +550,12 @@ export function useFungibleToken() {
         ...privateStateRef.current,
         signingKey: hexToBytes(accountAddress),
       };
+      setMetadata((prev) => {
+        const isCallerOwner = Boolean(
+          prev.owner && addressToHex32(accountAddress).toLowerCase() === prev.owner.toLowerCase()
+        );
+        return { ...prev, isCallerOwner };
+      });
     }
   }, [accountAddress]);
 
@@ -531,18 +564,13 @@ export function useFungibleToken() {
     const subscription = ledgerStateSubjectRef.current.subscribe((state) => {
       if (state) {
         setLedgerState(state);
-        setMetadata({
-          name: state._name || 'Midnight Fungible Token',
-          symbol: state._symbol || 'MFT',
-          decimals: Number(state._decimals || 6n),
-          totalSupply: state._totalSupply || 0n,
-          isInitialized: state._isInitialized,
-        });
+        const caller = mode === 'test' ? PRESET_IDENTITIES[0].addressHex : accountAddress;
+        setMetadata(extractMetadata(state, caller));
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [mode, accountAddress]);
 
   // Unified Circuit Execution Runner (Managing 4-step progress: Preparing -> Proving -> Submitting -> Confirmed)
   const executeCircuit = useCallback(
@@ -632,6 +660,9 @@ export function useFungibleToken() {
         ledgerStateSubjectRef.current.next(updatedLedger);
 
         // Commit updated contract state to memory and persist to localStorage
+        const caller = mode === 'test' ? PRESET_IDENTITIES[0].addressHex : accountAddress;
+        const meta = extractMetadata(updatedLedger, caller);
+
         if (mode === 'lace') {
           laceChargedStateRef.current = updatedChargedState;
           if (typeof window !== 'undefined') {
@@ -644,11 +675,13 @@ export function useFungibleToken() {
                 );
               }
               const metaPayload = {
-                name: updatedLedger._name || 'Midnight Fungible Token',
-                symbol: updatedLedger._symbol || 'MFT',
-                decimals: Number(updatedLedger._decimals || 6n),
-                totalSupply: updatedLedger._totalSupply?.toString() || '0',
-                isInitialized: updatedLedger._isInitialized,
+                name: meta.name,
+                symbol: meta.symbol,
+                decimals: meta.decimals,
+                totalSupply: meta.totalSupply.toString(),
+                isInitialized: meta.isInitialized,
+                owner: meta.owner,
+                ownerBech32: meta.ownerBech32,
               };
               localStorage.setItem(
                 `${TOKEN_META_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`,
@@ -663,13 +696,7 @@ export function useFungibleToken() {
         }
 
         // Update token metadata
-        setMetadata({
-          name: updatedLedger._name || 'Midnight Fungible Token',
-          symbol: updatedLedger._symbol || 'MFT',
-          decimals: Number(updatedLedger._decimals || 6n),
-          totalSupply: updatedLedger._totalSupply || 0n,
-          isInitialized: updatedLedger._isInitialized,
-        });
+        setMetadata(meta);
 
         // Update activity log
         setActivityLog((prev) =>
@@ -845,30 +872,49 @@ export function useFungibleToken() {
 
   const mint = useCallback(
     async (accountHex: string, amount: bigint | number) => {
-      const accountBytes = hexToBytes(accountHex);
+      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+      const callerBytes = hexToBytes(callerHex);
+      const toBytes = hexToBytes(accountHex);
       const valBigInt = BigInt(amount);
+
+      // Pre-flight check: caller must be owner
+      if (metadata.owner && addressToHex32(callerHex).toLowerCase() !== metadata.owner.toLowerCase()) {
+        throw new Error(
+          `FungibleToken: caller is not the owner. Only ${metadata.ownerBech32 || metadata.owner.slice(0, 10)}... can mint.`
+        );
+      }
 
       return executeCircuit(
         'mint',
-        { account: accountHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.mint(ctx, accountBytes, valBigInt)
+        { caller: callerHex, to: accountHex, value: valBigInt.toString() },
+        (ctx) => clientRef.current.mint(ctx, callerBytes, toBytes, valBigInt)
       );
     },
-    [executeCircuit]
+    [accountAddress, mode, metadata.owner, metadata.ownerBech32, executeCircuit]
   );
 
   const burn = useCallback(
-    async (accountHex: string, amount: bigint | number) => {
-      const accountBytes = hexToBytes(accountHex);
-      const valBigInt = BigInt(amount);
+    async (accountHexOrAmount: string | bigint | number, optionalAmount?: bigint | number) => {
+      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+      const callerBytes = hexToBytes(callerHex);
+      const valBigInt = typeof optionalAmount !== 'undefined'
+        ? BigInt(optionalAmount)
+        : BigInt(accountHexOrAmount);
+
+      // Pre-flight check: caller must be owner
+      if (metadata.owner && addressToHex32(callerHex).toLowerCase() !== metadata.owner.toLowerCase()) {
+        throw new Error(
+          `FungibleToken: caller is not the owner. Only ${metadata.ownerBech32 || metadata.owner.slice(0, 10)}... can burn.`
+        );
+      }
 
       return executeCircuit(
         'burn',
-        { account: accountHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.burn(ctx, accountBytes, valBigInt)
+        { caller: callerHex, value: valBigInt.toString() },
+        (ctx) => clientRef.current.burn(ctx, callerBytes, valBigInt)
       );
     },
-    [executeCircuit]
+    [accountAddress, mode, metadata.owner, metadata.ownerBech32, executeCircuit]
   );
 
   const resetContractCache = useCallback(() => {
@@ -887,8 +933,9 @@ export function useFungibleToken() {
       clientRef.current = client;
 
       const dummyCoinPublicKey = addressToHex32(accountAddress);
+      const initialOwnerBytes = hexToBytes(accountAddress || '01'.repeat(32));
       const initialPrivateState: FungibleTokenPrivateState = {
-        signingKey: hexToBytes(accountAddress || '01'.repeat(32)),
+        signingKey: initialOwnerBytes,
       };
       privateStateRef.current = initialPrivateState;
 
@@ -896,7 +943,7 @@ export function useFungibleToken() {
         initialPrivateState,
         dummyCoinPublicKey
       );
-      const initResult = client.initialState(constructorCtx);
+      const initResult = client.initialState(constructorCtx, initialOwnerBytes);
       laceChargedStateRef.current = initResult.currentContractState.data;
       privateStateRef.current = initResult.currentPrivateState;
 
@@ -904,13 +951,7 @@ export function useFungibleToken() {
       setLedgerState(decoded);
       ledgerStateSubjectRef.current.next(decoded);
 
-      setMetadata({
-        name: decoded._name || 'Midnight Fungible Token',
-        symbol: decoded._symbol || 'MFT',
-        decimals: Number(decoded._decimals || 6n),
-        totalSupply: 0n,
-        isInitialized: decoded._isInitialized,
-      });
+      setMetadata(extractMetadata(decoded, accountAddress));
     } else {
       initSimulatedTestState();
     }

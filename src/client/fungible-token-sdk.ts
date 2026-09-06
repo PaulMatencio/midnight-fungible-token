@@ -70,10 +70,14 @@ export class FungibleTokenClient<PS extends FungibleTokenPrivateState = Fungible
    * Generates the initial contract and runtime states for deployment.
    *
    * @param context Constructor context containing initial private state and coin public key.
+   * @param initialOwner 32-byte public key of the initial contract owner.
    * @returns ConstructorResult containing initial contract and private states.
    */
-  public initialState(context: ConstructorContext<PS>): ConstructorResult<PS> {
-    return this.contractInstance.initialState(context);
+  public initialState(
+    context: ConstructorContext<PS>,
+    initialOwner: Uint8Array = new Uint8Array(32)
+  ): ConstructorResult<PS> {
+    return this.contractInstance.initialState(context, initialOwner);
   }
 
   /**
@@ -241,39 +245,42 @@ export class FungibleTokenClient<PS extends FungibleTokenPrivateState = Fungible
   }
 
   /**
-   * Mints tokens to a designated account.
+   * Mints tokens to a designated account (owner only).
    *
    * @param context Circuit execution context.
-   * @param account 32-byte destination address.
+   * @param caller 32-byte caller account public key address (must match owner).
+   * @param to 32-byte destination address.
    * @param value Amount of tokens to mint.
-   * @returns Circuit execution results returning empty tuple `[]`.
+   * @returns Circuit execution results returning boolean success.
    */
   public mint(
     context: CircuitContext<PS>,
-    account: Uint8Array,
+    caller: Uint8Array,
+    to: Uint8Array,
     value: bigint | number
-  ): CircuitResults<PS, []> {
-    this.assertValidAddress(account, 'account');
+  ): CircuitResults<PS, boolean> {
+    this.assertValidAddress(caller, 'caller');
+    this.assertValidAddress(to, 'to');
     const valueBigInt = typeof value === 'number' ? BigInt(value) : value;
-    return this.contractInstance.circuits._mint(context, account, valueBigInt);
+    return this.contractInstance.circuits.mint(context, caller, to, valueBigInt);
   }
 
   /**
-   * Burns tokens from a designated account.
+   * Burns tokens from the caller's account and decreases total supply (owner only).
    *
    * @param context Circuit execution context.
-   * @param account 32-byte account address from which tokens are burned.
+   * @param caller 32-byte caller account address (must match owner).
    * @param value Amount of tokens to burn.
-   * @returns Circuit execution results returning empty tuple `[]`.
+   * @returns Circuit execution results returning boolean success.
    */
   public burn(
     context: CircuitContext<PS>,
-    account: Uint8Array,
+    caller: Uint8Array,
     value: bigint | number
-  ): CircuitResults<PS, []> {
-    this.assertValidAddress(account, 'account');
+  ): CircuitResults<PS, boolean> {
+    this.assertValidAddress(caller, 'caller');
     const valueBigInt = typeof value === 'number' ? BigInt(value) : value;
-    return this.contractInstance.circuits._burn(context, account, valueBigInt);
+    return this.contractInstance.circuits.burn(context, caller, valueBigInt);
   }
 
   /**

@@ -46,4 +46,7 @@ export interface TokenMetadata {
   decimals: number;
   totalSupply: bigint;
   isInitialized: boolean;
+  owner?: string;
+  ownerBech32?: string;
+  isCallerOwner?: boolean;
 }

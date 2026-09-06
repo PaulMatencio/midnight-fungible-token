@@ -13,6 +13,7 @@ import {
   Radio,
   Zap,
   RotateCcw,
+  Crown,
 } from 'lucide-react';
 import { MIDNIGHT_CONFIG, getExplorerContractUrl } from '@/src/infrastructure/config/midnight-config';
 import { useWallet } from '@/src/presentation/context/WalletContext';
@@ -33,11 +34,17 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
 }) => {
   const { mode, accountAddress, activeIdentity, isConnected, connectWallet } = useWallet();
   const [copiedAddr, setCopiedAddr] = useState(false);
+  const [copiedOwner, setCopiedOwner] = useState(false);
 
-  const copyToClipboard = (text: string) => {
+  const copyToClipboard = (text: string, isOwner = false) => {
     navigator.clipboard.writeText(text);
-    setCopiedAddr(true);
-    setTimeout(() => setCopiedAddr(false), 2000);
+    if (isOwner) {
+      setCopiedOwner(true);
+      setTimeout(() => setCopiedOwner(false), 2000);
+    } else {
+      setCopiedAddr(true);
+      setTimeout(() => setCopiedAddr(false), 2000);
+    }
   };
 
   const formatUnits = (amount: bigint, decimals: number): string => {
@@ -132,7 +139,7 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
       </div>
 
       {/* Grid: Token Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Token Name & Symbol */}
         <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-colors">
           <div className="text-xs text-slate-400 flex items-center gap-1.5 mb-1">
@@ -185,6 +192,42 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
                 Connect
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Contract Owner */}
+        <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-colors">
+          <div className="text-xs text-slate-400 flex items-center justify-between mb-1">
+            <span className="flex items-center gap-1.5">
+              <Crown className="w-3.5 h-3.5 text-amber-400" /> Contract Owner
+            </span>
+            {metadata.isCallerOwner && (
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                You
+              </span>
+            )}
+          </div>
+          <div className="text-sm font-bold text-white tracking-tight font-mono flex items-center justify-between">
+            <span className="truncate max-w-[110px]" title={metadata.ownerBech32 || metadata.owner || 'Not Set'}>
+              {metadata.ownerBech32
+                ? `${metadata.ownerBech32.slice(0, 8)}...${metadata.ownerBech32.slice(-6)}`
+                : metadata.owner
+                ? `${metadata.owner.slice(0, 8)}...`
+                : 'Pending'}
+            </span>
+            {(metadata.ownerBech32 || metadata.owner) && (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(metadata.ownerBech32 || metadata.owner || '', true)}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                title="Copy Owner Address"
+              >
+                {copiedOwner ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              </button>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1 font-mono">
+            {metadata.isCallerOwner ? 'Exclusive Mint/Burn Rights' : 'FungibleTokenV2 Owner'}
           </div>
         </div>
 

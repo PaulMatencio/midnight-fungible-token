@@ -14,6 +14,7 @@ import {
   User,
   Wallet,
   Lock,
+  ShieldCheck,
 } from 'lucide-react';
 import { PRESET_IDENTITIES } from '@/src/infrastructure/config/midnight-config';
 import { useWallet } from '@/src/presentation/context/WalletContext';
@@ -299,6 +300,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
           }`}
         >
           <PlusCircle className="w-3.5 h-3.5" /> Mint Tokens
+          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Owner</span>
         </button>
 
         <button
@@ -310,6 +312,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
           }`}
         >
           <Flame className="w-3.5 h-3.5" /> Burn Tokens
+          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Owner</span>
         </button>
 
         <button
@@ -572,6 +575,35 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 4: Mint */}
         {activeTab === 'mint' && (
           <form onSubmit={handleMint} className="space-y-5">
+            {/* Owner Permission Alert */}
+            {metadata.owner && !metadata.isCallerOwner && mode !== 'test' ? (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5">
+                    <span>Owner-Only Circuit (FungibleTokenV2)</span>
+                  </div>
+                  <p className="text-slate-300 leading-relaxed">
+                    Only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) has authority to mint new tokens. Your connected wallet is not the owner.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>
+                    Owner: <span className="font-mono text-slate-200">{metadata.ownerBech32 ? `${metadata.ownerBech32.slice(0, 14)}...` : metadata.owner ? `${metadata.owner.slice(0, 10)}...` : 'Pending Init'}</span>
+                  </span>
+                </div>
+                {metadata.isCallerOwner && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    You are Owner
+                  </span>
+                )}
+              </div>
+            )}
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-slate-300">
@@ -611,7 +643,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
 
             <button
               type="submit"
-              disabled={isExecuting}
+              disabled={isExecuting || (Boolean(metadata.owner) && !metadata.isCallerOwner && mode !== 'test')}
               className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isExecuting ? 'Minting...' : 'Mint Tokens'}
@@ -623,22 +655,30 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 5: Burn */}
         {activeTab === 'burn' && (
           <form onSubmit={handleBurn} className="space-y-5">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300">
-                  Target Account to Burn Tokens From
-                </label>
-                {renderQuickSelect(setBurnAccount)}
+            {/* Owner Permission Alert / Info */}
+            {metadata.owner && !metadata.isCallerOwner && mode !== 'test' ? (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5">
+                    <span>Owner-Only Circuit (FungibleTokenV2)</span>
+                  </div>
+                  <p className="text-slate-300 leading-relaxed">
+                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) can burn tokens.
+                  </p>
+                </div>
               </div>
-              <input
-                type="text"
-                required
-                value={burnAccount}
-                onChange={(e) => setBurnAccount(e.target.value)}
-                placeholder="Midnight address (mn_addr_...) or 64-character hex"
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 focus:border-rose-500 text-white font-mono text-xs focus:outline-none transition-colors"
-              />
-            </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs space-y-1">
+                <div className="font-semibold text-slate-300 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Owner Token Burning</span>
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  Tokens are burned directly from the contract owner&apos;s balance ({metadata.ownerBech32 ? `${metadata.ownerBech32.slice(0, 16)}...` : 'Owner'}).
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -662,7 +702,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
 
             <button
               type="submit"
-              disabled={isExecuting}
+              disabled={isExecuting || (Boolean(metadata.owner) && !metadata.isCallerOwner && mode !== 'test')}
               className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-500 hover:to-orange-500 text-white transition-all shadow-lg shadow-rose-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isExecuting ? 'Burning...' : 'Burn Tokens'}

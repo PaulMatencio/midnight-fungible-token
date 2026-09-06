@@ -18,6 +18,7 @@ export interface AccountShare {
   formattedBalance: string;
   sharePercentage: number; // 0 - 100
   isCurrentUser?: boolean;
+  isOwner?: boolean;
   label?: string;
 }
 
@@ -32,6 +33,8 @@ export interface IndexerTokenReport {
   totalSupply: bigint;
   formattedTotalSupply: string;
   isInitialized: boolean;
+  owner?: string;
+  ownerBech32?: string;
   holders: AccountShare[];
   holdersCount: number;
   largestHolderShare: number;
@@ -162,12 +165,15 @@ export function calculateAccountSharesFromLedger(
   const decimals = Number(ledgerState._decimals || 0n);
   const totalSupply = ledgerState._totalSupply || 0n;
   const holders: AccountShare[] = [];
+  const ownerHex = ledgerState.owner ? bytesToHex(ledgerState.owner) : undefined;
+  const ownerBech32 = ledgerState.owner ? formatBech32Address(ledgerState.owner, options?.networkId) : undefined;
 
   if (ledgerState._balances && typeof ledgerState._balances[Symbol.iterator] === 'function') {
     for (const [accountBytes, balance] of ledgerState._balances) {
       const addressHex = bytesToHex(accountBytes);
       const addressBech32 = formatBech32Address(accountBytes, options?.networkId);
       const { label, isCurrentUser } = resolveAccountLabel(addressHex, options?.currentUserAddress);
+      const isOwner = Boolean(ownerHex && addressHex.toLowerCase() === ownerHex.toLowerCase());
 
       const sharePercentage =
         totalSupply > 0n ? Number((balance * 10000n) / totalSupply) / 100 : 0;
@@ -179,7 +185,8 @@ export function calculateAccountSharesFromLedger(
         formattedBalance: formatTokenAmount(balance, decimals),
         sharePercentage,
         isCurrentUser,
-        label,
+        isOwner,
+        label: isOwner ? (label ? `${label} (Owner)` : 'Contract Owner') : label,
       });
     }
   }
@@ -204,6 +211,8 @@ export function calculateAccountSharesFromLedger(
     totalSupply,
     formattedTotalSupply: formatTokenAmount(totalSupply, decimals),
     isInitialized: ledgerState._isInitialized,
+    owner: ownerHex,
+    ownerBech32: ownerBech32,
     holders,
     holdersCount: holders.length,
     largestHolderShare: Math.round(largestHolderShare * 100) / 100,

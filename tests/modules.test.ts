@@ -286,8 +286,9 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
   it('should serialize initialized state and restore it accurately across browser reloads', () => {
     const contract = new Contract({});
     const dummyCoinPubKey = '01'.repeat(32);
+    const owner = new Uint8Array(32).fill(0x01);
     const constructorCtx = CompactRuntime.createConstructorContext({}, dummyCoinPubKey);
-    const init = contract.initialState(constructorCtx);
+    const init = contract.initialState(constructorCtx, owner);
 
     const circuitCtx = CompactRuntime.createCircuitContext(
       dummyCoinPubKey,
@@ -300,7 +301,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     const resInit = contract.circuits.initialize(circuitCtx, 'Midnight Gold', 'MDG', 6n);
     const initChargedState = resInit.context.currentQueryContext.state;
 
-    // Mint tokens to Alice
+    // Mint tokens to Alice (caller must be owner)
     const alice = new Uint8Array(32).fill(0xaa);
     const mintCtx = CompactRuntime.createCircuitContext(
       dummyCoinPubKey,
@@ -308,7 +309,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
       initChargedState,
       {}
     );
-    const resMint = contract.circuits._mint(mintCtx, alice, 75_000n);
+    const resMint = contract.circuits.mint(mintCtx, owner, alice, 75_000n);
     const updatedChargedState = resMint.context.currentQueryContext.state;
 
     // Verify state before serialization
@@ -318,6 +319,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     expect(ledgerBefore._decimals).toBe(6n);
     expect(ledgerBefore._totalSupply).toBe(75_000n);
     expect(ledgerBefore._isInitialized).toBe(true);
+    expect(ledgerBefore.owner).toEqual(owner);
     expect(ledgerBefore._balances.lookup(alice)).toBe(75_000n);
 
     // Simulate browser localStorage save
@@ -336,14 +338,16 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     expect(ledgerAfter._decimals).toBe(6n);
     expect(ledgerAfter._totalSupply).toBe(75_000n);
     expect(ledgerAfter._isInitialized).toBe(true);
+    expect(ledgerAfter.owner).toEqual(owner);
     expect(ledgerAfter._balances.lookup(alice)).toBe(75_000n);
   });
 
   it('should reject re-initialization when already initialized and maintain state intact', () => {
     const contract = new Contract({});
     const dummyCoinPubKey = '01'.repeat(32);
+    const owner = new Uint8Array(32).fill(0x01);
     const constructorCtx = CompactRuntime.createConstructorContext({}, dummyCoinPubKey);
-    const init = contract.initialState(constructorCtx);
+    const init = contract.initialState(constructorCtx, owner);
 
     const circuitCtx = CompactRuntime.createCircuitContext(
       dummyCoinPubKey,
@@ -373,8 +377,9 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     // 1. Uninitialized state (e.g. from indexer prior to block finalization)
     const contract = new Contract({});
     const dummyCoinPubKey = '01'.repeat(32);
+    const owner = new Uint8Array(32).fill(0x01);
     const constructorCtx = CompactRuntime.createConstructorContext({}, dummyCoinPubKey);
-    const uninitializedState = contract.initialState(constructorCtx).currentContractState.data;
+    const uninitializedState = contract.initialState(constructorCtx, owner).currentContractState.data;
     const uninitDecoded = ledger(uninitializedState);
     expect(uninitDecoded._isInitialized).toBe(false);
 

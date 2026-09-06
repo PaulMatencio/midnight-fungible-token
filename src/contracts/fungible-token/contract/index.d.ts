@@ -29,24 +29,13 @@ export type ImpureCircuits<PS> = {
                fromAccount_0: Uint8Array,
                to_0: Uint8Array,
                value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
-  _transfer(context: __compactRuntime.CircuitContext<PS>,
-            fromAccount_0: Uint8Array,
-            to_0: Uint8Array,
-            value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _mint(context: __compactRuntime.CircuitContext<PS>,
-        account_0: Uint8Array,
-        value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _burn(context: __compactRuntime.CircuitContext<PS>,
-        account_0: Uint8Array,
-        value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _approve(context: __compactRuntime.CircuitContext<PS>,
-           owner_0: Uint8Array,
-           spender_0: Uint8Array,
-           value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _spendAllowance(context: __compactRuntime.CircuitContext<PS>,
-                  owner_0: Uint8Array,
-                  spender_0: Uint8Array,
-                  value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
+  mint(context: __compactRuntime.CircuitContext<PS>,
+       caller_0: Uint8Array,
+       to_0: Uint8Array,
+       value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
+  burn(context: __compactRuntime.CircuitContext<PS>,
+       caller_0: Uint8Array,
+       value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
 }
 
 export type ProvableCircuits<PS> = {
@@ -75,24 +64,13 @@ export type ProvableCircuits<PS> = {
                fromAccount_0: Uint8Array,
                to_0: Uint8Array,
                value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
-  _transfer(context: __compactRuntime.CircuitContext<PS>,
-            fromAccount_0: Uint8Array,
-            to_0: Uint8Array,
-            value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _mint(context: __compactRuntime.CircuitContext<PS>,
-        account_0: Uint8Array,
-        value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _burn(context: __compactRuntime.CircuitContext<PS>,
-        account_0: Uint8Array,
-        value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _approve(context: __compactRuntime.CircuitContext<PS>,
-           owner_0: Uint8Array,
-           spender_0: Uint8Array,
-           value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _spendAllowance(context: __compactRuntime.CircuitContext<PS>,
-                  owner_0: Uint8Array,
-                  spender_0: Uint8Array,
-                  value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
+  mint(context: __compactRuntime.CircuitContext<PS>,
+       caller_0: Uint8Array,
+       to_0: Uint8Array,
+       value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
+  burn(context: __compactRuntime.CircuitContext<PS>,
+       caller_0: Uint8Array,
+       value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
 }
 
 export type PureCircuits = {
@@ -124,24 +102,13 @@ export type Circuits<PS> = {
                fromAccount_0: Uint8Array,
                to_0: Uint8Array,
                value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
-  _transfer(context: __compactRuntime.CircuitContext<PS>,
-            fromAccount_0: Uint8Array,
-            to_0: Uint8Array,
-            value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _mint(context: __compactRuntime.CircuitContext<PS>,
-        account_0: Uint8Array,
-        value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _burn(context: __compactRuntime.CircuitContext<PS>,
-        account_0: Uint8Array,
-        value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _approve(context: __compactRuntime.CircuitContext<PS>,
-           owner_0: Uint8Array,
-           spender_0: Uint8Array,
-           value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
-  _spendAllowance(context: __compactRuntime.CircuitContext<PS>,
-                  owner_0: Uint8Array,
-                  spender_0: Uint8Array,
-                  value_0: bigint): __compactRuntime.CircuitResults<PS, []>;
+  mint(context: __compactRuntime.CircuitContext<PS>,
+       caller_0: Uint8Array,
+       to_0: Uint8Array,
+       value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
+  burn(context: __compactRuntime.CircuitContext<PS>,
+       caller_0: Uint8Array,
+       value_0: bigint): __compactRuntime.CircuitResults<PS, boolean>;
 }
 
 export type Ledger = {
@@ -169,6 +136,7 @@ export type Ledger = {
   readonly _name: string;
   readonly _symbol: string;
   readonly _decimals: bigint;
+  readonly owner: Uint8Array;
 }
 
 export type ContractReferenceLocations = any;
@@ -181,7 +149,8 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   impureCircuits: ImpureCircuits<PS>;
   provableCircuits: ProvableCircuits<PS>;
   constructor(witnesses: W);
-  initialState(context: __compactRuntime.ConstructorContext<PS>): __compactRuntime.ConstructorResult<PS>;
+  initialState(context: __compactRuntime.ConstructorContext<PS>,
+               initialOwner_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

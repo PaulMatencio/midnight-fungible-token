@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';
-import { Contract, ledger, type Witnesses } from '../src/contracts/fungible-token/contract/index.js';
+import { Contract, ledger, type Witnesses } from '../../contracts/managed/fungible-token-v2/contract/index.js';
 
 type PrivateState = Record<string, never>;
 

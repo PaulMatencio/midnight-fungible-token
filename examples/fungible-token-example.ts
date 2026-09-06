@@ -43,8 +43,9 @@ async function main(): Promise<void> {
 
   // 3. Initialize Contract via Constructor Context
   console.log('\n[1] Invoking Constructor...');
+  const owner = alice;
   const constructorCtx = CompactRuntime.createConstructorContext(initialPrivateState, coinPublicKey);
-  const initResult = client.initialState(constructorCtx);
+  const initResult = client.initialState(constructorCtx, owner);
 
   let currentPrivateState = initResult.currentPrivateState;
   let currentChargedState = initResult.currentContractState.data;
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
     currentPrivateState
   );
 
-  const mintResult = client.mint(circuitCtx, alice, 1_000_000n);
+  const mintResult = client.mint(circuitCtx, owner, alice, 1_000_000n);
   currentChargedState = mintResult.context.currentQueryContext.state;
   currentPrivateState = mintResult.context.currentPrivateState;
 
