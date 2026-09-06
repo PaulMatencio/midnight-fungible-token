@@ -1,0 +1,17 @@
+{
+  "contractName": "fungible-token",
+  "contractAddress": "6764022acd5b9fbff2b5baeb84f3082cf51f6d8b2dc978df9778b93c0005983c",
+  "networkId": "preprod",
+  "indexerUrl": "https://indexer.preprod.midnight.network/api/v4/graphql",
+  "indexerWsUrl": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
+  "nodeUrl": "https://rpc.preprod.midnight.network",
+  "proofServerUrl": "http://127.0.0.1:6300",
+  "faucetUrl": "https://faucet.preprod.midnight.network",
+  "explorerUrl": "https://explorer.1am.xyz",
+  "indexer": "https://indexer.preprod.midnight.network/api/v4/graphql",
+  "indexerWS": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
+  "nodeRpc": "https://rpc.preprod.midnight.network",
+  "proofServer": "http://127.0.0.1:6300",
+  "faucet": "https://faucet.preprod.midnight.network",
+  "explorer": "https://explorer.1am.xyz"
+}
