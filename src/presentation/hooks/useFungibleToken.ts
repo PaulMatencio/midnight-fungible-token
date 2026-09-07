@@ -883,34 +883,14 @@ export function useFungibleToken() {
     }
     setActivityLog([]);
     if (mode === 'lace') {
-      const client = new FungibleTokenClient({});
-      clientRef.current = client;
-
-      const dummyCoinPublicKey = addressToHex32(accountAddress);
-      const initialOwnerBytes = hexToBytes(accountAddress || '01'.repeat(32));
-      const initialPrivateState: FungibleTokenPrivateState = {
-        signingKey: initialOwnerBytes,
-      };
-      privateStateRef.current = initialPrivateState;
-
-      const constructorCtx = CompactRuntime.createConstructorContext(
-        initialPrivateState,
-        dummyCoinPublicKey
-      );
-      const initResult = client.initialState(constructorCtx, initialOwnerBytes);
-      laceChargedStateRef.current = initResult.currentContractState.data;
-      privateStateRef.current = initResult.currentPrivateState;
-
-      const decoded = client.queryLedgerStateFromRaw(laceChargedStateRef.current);
-      setLedgerState(decoded);
-      ledgerStateSubjectRef.current.next(decoded);
-
-      setMetadata(extractMetadata(decoded, accountAddress));
+      laceChargedStateRef.current = null;
+      fetchLaceOnChainState();
+      fetchIndexerReport();
     } else {
       initSimulatedTestState();
     }
-    showToast('info', 'Contract Cache Cleared', 'Contract state reset. You can now initialize again.');
-  }, [mode, accountAddress, initSimulatedTestState, showToast]);
+    showToast('info', 'Contract Cache Cleared', 'Contract state re-synchronized from live on-chain indexer.');
+  }, [mode, fetchLaceOnChainState, fetchIndexerReport, initSimulatedTestState, showToast]);
 
   return {
     metadata,
