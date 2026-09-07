@@ -534,7 +534,7 @@ export function useFungibleToken() {
     const subscription = ledgerStateSubjectRef.current.subscribe((state) => {
       if (state) {
         setLedgerState(state);
-        const caller = mode === 'test' ? PRESET_IDENTITIES[0].addressHex : accountAddress;
+        const caller = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : null);
         setMetadata(extractMetadata(state, caller));
       }
     });
@@ -630,7 +630,7 @@ export function useFungibleToken() {
         ledgerStateSubjectRef.current.next(updatedLedger);
 
         // Commit updated contract state to memory and persist to localStorage
-        const caller = mode === 'test' ? PRESET_IDENTITIES[0].addressHex : accountAddress;
+        const caller = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : null);
         const meta = extractMetadata(updatedLedger, caller);
 
         if (mode === 'lace') {
