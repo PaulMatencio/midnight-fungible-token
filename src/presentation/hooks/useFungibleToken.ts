@@ -183,12 +183,14 @@ export function extractMetadata(
     isCallerOwner = callerCleanHex === ownerHex.toLowerCase();
   }
 
+  const isInit = Boolean(decoded._isInitialized);
+
   return {
-    name: decoded._name || 'Midnight Fungible Token',
-    symbol: decoded._symbol || 'MFT',
-    decimals: Number(decoded._decimals || 6n),
+    name: decoded._name || (isInit ? 'Midnight Fungible Token' : 'Uninitialized Token'),
+    symbol: decoded._symbol || (isInit ? 'MFT' : '---'),
+    decimals: Number(decoded._decimals !== undefined ? decoded._decimals : 0n),
     totalSupply: decoded._totalSupply || 0n,
-    isInitialized: Boolean(decoded._isInitialized),
+    isInitialized: isInit,
     owner: ownerHex,
     ownerBech32,
     isCallerOwner,
@@ -278,6 +280,7 @@ export function useFungibleToken() {
   }, []);
 
   // Initialize simulated test state (ONLY for Test Mode)
+  // Initializes contract strictly as defined in constructor(initialOwner: Bytes<32>)
   const initSimulatedTestState = useCallback(() => {
     try {
       const client = new FungibleTokenClient({});
@@ -294,43 +297,10 @@ export function useFungibleToken() {
         initialPrivateState,
         dummyCoinPublicKey
       );
+      // Directly execute constructor(initialOwner)
       const initResult = client.initialState(constructorCtx, initialOwnerBytes);
-      let st = initResult.currentContractState.data;
-      let ps = initResult.currentPrivateState;
-
-      // In Test Mode: Seed initial token state (Alice & Bob pre-funded for offline simulation)
-      let circuitCtx = CompactRuntime.createCircuitContext(
-        MIDNIGHT_CONFIG.contractAddress,
-        dummyCoinPublicKey,
-        st,
-        ps
-      );
-      const initRes = client.initialize(circuitCtx, 'Midnight Fungible Token', 'MFT', 6n);
-      st = initRes.context.currentQueryContext.state;
-      ps = initRes.context.currentPrivateState;
-
-      // Mint 5M to Alice (caller must be owner: Alice)
-      circuitCtx = CompactRuntime.createCircuitContext(
-        MIDNIGHT_CONFIG.contractAddress,
-        dummyCoinPublicKey,
-        st,
-        ps
-      );
-      const aliceBytes = hexToBytes(PRESET_IDENTITIES[0].addressHex);
-      const mintRes1 = client.mint(circuitCtx, aliceBytes, aliceBytes, 5_000_000n * 10n ** 6n);
-      st = mintRes1.context.currentQueryContext.state;
-
-      // Mint 5M to Bob (caller must be owner: Alice)
-      circuitCtx = CompactRuntime.createCircuitContext(
-        MIDNIGHT_CONFIG.contractAddress,
-        dummyCoinPublicKey,
-        st,
-        mintRes1.context.currentPrivateState
-      );
-      const bobBytes = hexToBytes(PRESET_IDENTITIES[1].addressHex);
-      const mintRes2 = client.mint(circuitCtx, aliceBytes, bobBytes, 5_000_000n * 10n ** 6n);
-      st = mintRes2.context.currentQueryContext.state;
-      ps = mintRes2.context.currentPrivateState;
+      const st = initResult.currentContractState.data;
+      const ps = initResult.currentPrivateState;
 
       simulatedChargedStateRef.current = st;
       privateStateRef.current = ps;

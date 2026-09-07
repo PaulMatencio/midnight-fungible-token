@@ -74,6 +74,13 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
 
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Switch to init tab automatically if contract is uninitialized
+  useEffect(() => {
+    if (!metadata.isInitialized) {
+      setActiveTab('init');
+    }
+  }, [metadata.isInitialized]);
+
   // Sync defaults whenever mode or accountAddress changes
   useEffect(() => {
     if (mode === 'test') {
