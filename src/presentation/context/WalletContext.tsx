@@ -168,6 +168,11 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsWalletLocked(true);
         setWalletError('Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it.');
       } else if (
+        isChannelShutdownError(err) ||
+        err?.message?.toLowerCase().includes('context invalidated')
+      ) {
+        setWalletError('Lace extension was reloaded in Chrome. Please refresh this browser tab (F5) to reconnect.');
+      } else if (
         err?.name === 'PermissionRejected' ||
         err?.message?.toLowerCase().includes('reject') ||
         err?.message?.toLowerCase().includes('denied')
