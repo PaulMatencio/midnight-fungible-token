@@ -829,22 +829,13 @@ export function useFungibleToken() {
       const toBytes = hexToBytes(toHex);
       const valBigInt = BigInt(amount);
 
-      const availableAllowance = getAllowance(fromHex, callerHex);
-      if (availableAllowance < valBigInt) {
-        const fmtAllowance = (Number(availableAllowance) / 10 ** metadata.decimals).toLocaleString();
-        const fmtReq = (Number(valBigInt) / 10 ** metadata.decimals).toLocaleString();
-        throw new Error(
-          `FungibleToken: insufficient allowance (${fmtAllowance} ${metadata.symbol} approved, ${fmtReq} requested). The token owner (${fromHex.slice(0, 10)}...) must first approve the caller (${callerHex.slice(0, 10)}...) in the "Approve Spender" tab.`
-        );
-      }
-
       return executeCircuit(
         'transferFrom',
         { from: fromHex, to: toHex, value: valBigInt.toString() },
         (ctx) => clientRef.current.transferFrom(ctx, callerBytes, fromBytes, toBytes, valBigInt)
       );
     },
-    [accountAddress, mode, executeCircuit, getAllowance, metadata.decimals, metadata.symbol]
+    [accountAddress, mode, executeCircuit]
   );
 
   const mint = useCallback(
@@ -854,20 +845,13 @@ export function useFungibleToken() {
       const toBytes = hexToBytes(accountHex);
       const valBigInt = BigInt(amount);
 
-      // Pre-flight check: caller must be owner
-      if (metadata.owner && addressToHex32(callerHex).toLowerCase() !== metadata.owner.toLowerCase()) {
-        throw new Error(
-          `FungibleToken: caller is not the owner. Only ${metadata.ownerBech32 || metadata.owner.slice(0, 10)}... can mint.`
-        );
-      }
-
       return executeCircuit(
         'mint',
         { caller: callerHex, to: accountHex, value: valBigInt.toString() },
         (ctx) => clientRef.current.mint(ctx, callerBytes, toBytes, valBigInt)
       );
     },
-    [accountAddress, mode, metadata.owner, metadata.ownerBech32, executeCircuit]
+    [accountAddress, mode, executeCircuit]
   );
 
   const burn = useCallback(
@@ -878,20 +862,13 @@ export function useFungibleToken() {
         ? BigInt(optionalAmount)
         : BigInt(accountHexOrAmount);
 
-      // Pre-flight check: caller must be owner
-      if (metadata.owner && addressToHex32(callerHex).toLowerCase() !== metadata.owner.toLowerCase()) {
-        throw new Error(
-          `FungibleToken: caller is not the owner. Only ${metadata.ownerBech32 || metadata.owner.slice(0, 10)}... can burn.`
-        );
-      }
-
       return executeCircuit(
         'burn',
         { caller: callerHex, value: valBigInt.toString() },
         (ctx) => clientRef.current.burn(ctx, callerBytes, valBigInt)
       );
     },
-    [accountAddress, mode, metadata.owner, metadata.ownerBech32, executeCircuit]
+    [accountAddress, mode, executeCircuit]
   );
 
   const resetContractCache = useCallback(() => {

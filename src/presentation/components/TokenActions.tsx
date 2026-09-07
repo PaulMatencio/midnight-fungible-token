@@ -656,22 +656,12 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                 <div className="space-y-1">
                   <div className="font-semibold flex items-center gap-1.5">
                     <span>Owner-Only Circuit (FungibleTokenV2)</span>
-                    {mode === 'test' && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/30">
-                        Testing as Non-Owner ({activeIdentity?.name || 'Bob'})
-                      </span>
-                    )}
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/30">
+                      Caller: {mode === 'test' ? activeIdentity?.name || 'Bob' : 'Connected Wallet'} (Non-Owner)
+                    </span>
                   </div>
                   <p className="text-slate-300 leading-relaxed">
-                    {mode === 'test' ? (
-                      <>
-                        You are currently acting as <strong className="text-white font-mono">{activeIdentity?.name || 'Bob'}</strong>, who is <span className="text-rose-400 font-semibold">not the contract owner</span>. Click the button below to test that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
-                      </>
-                    ) : (
-                      <>
-                        Only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) has authority to mint new tokens. Your connected wallet is not the owner.
-                      </>
-                    )}
+                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) can mint new tokens. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
                   </p>
                 </div>
               </div>
@@ -730,17 +720,17 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
 
             <button
               type="submit"
-              disabled={isExecuting || (Boolean(metadata.owner) && !metadata.isCallerOwner && mode !== 'test')}
+              disabled={isExecuting}
               className={`w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 ${
-                mode === 'test' && !metadata.isCallerOwner
+                !metadata.isCallerOwner
                   ? 'bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white shadow-amber-500/20'
                   : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-500/20'
               }`}
             >
               {isExecuting
                 ? 'Executing Circuit...'
-                : mode === 'test' && !metadata.isCallerOwner
-                ? `Test Mint as ${activeIdentity?.name || 'Bob'} (Expect Owner Rejection)`
+                : !metadata.isCallerOwner
+                ? `Execute Mint as Non-Owner (Expect Contract Rejection)`
                 : 'Mint Tokens'}
               <PlusCircle className="w-4 h-4" />
             </button>
@@ -757,22 +747,12 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                 <div className="space-y-1">
                   <div className="font-semibold flex items-center gap-1.5">
                     <span>Owner-Only Circuit (FungibleTokenV2)</span>
-                    {mode === 'test' && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/30">
-                        Testing as Non-Owner ({activeIdentity?.name || 'Bob'})
-                      </span>
-                    )}
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/30">
+                      Caller: {mode === 'test' ? activeIdentity?.name || 'Bob' : 'Connected Wallet'} (Non-Owner)
+                    </span>
                   </div>
                   <p className="text-slate-300 leading-relaxed">
-                    {mode === 'test' ? (
-                      <>
-                        You are currently acting as <strong className="text-white font-mono">{activeIdentity?.name || 'Bob'}</strong>, who is <span className="text-rose-400 font-semibold">not the contract owner</span>. Click the button below to test that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
-                      </>
-                    ) : (
-                      <>
-                        Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) can burn tokens.
-                      </>
-                    )}
+                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) can burn tokens. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
                   </p>
                 </div>
               </div>
@@ -810,17 +790,17 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
 
             <button
               type="submit"
-              disabled={isExecuting || (Boolean(metadata.owner) && !metadata.isCallerOwner && mode !== 'test')}
+              disabled={isExecuting}
               className={`w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 ${
-                mode === 'test' && !metadata.isCallerOwner
+                !metadata.isCallerOwner
                   ? 'bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white shadow-amber-500/20'
                   : 'bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-500 hover:to-orange-500 text-white shadow-rose-500/20'
               }`}
             >
               {isExecuting
                 ? 'Executing Circuit...'
-                : mode === 'test' && !metadata.isCallerOwner
-                ? `Test Burn as ${activeIdentity?.name || 'Bob'} (Expect Owner Rejection)`
+                : !metadata.isCallerOwner
+                ? `Execute Burn as Non-Owner (Expect Contract Rejection)`
                 : 'Burn Tokens'}
               <Flame className="w-4 h-4" />
             </button>

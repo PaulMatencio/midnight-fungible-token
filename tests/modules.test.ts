@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   isMidnightExtensionInstalled,
   detectInstalledWallets,
@@ -584,5 +584,74 @@ describe('Module G: Midnight Indexer Contract Query & Account Share Calculation'
   });
 });
 
+describe('Module E: Smart Contract Direct Circuit Access Control Enforcement', () => {
+  const dummyContractAddress = '00'.repeat(32);
+  const dummyCoinPublicKey = '01'.repeat(32);
+  const createKey = (b: number): Uint8Array => new Uint8Array(32).fill(b);
 
+  const OWNER = createKey(1);
+  const NON_OWNER = createKey(2);
+  const RECIPIENT = createKey(3);
 
+  let contract: Contract<Record<string, never>>;
+  let privateState: Record<string, never>;
+  let circuitContext: any;
+
+  beforeEach(() => {
+    contract = new Contract({});
+    privateState = {};
+
+    const constructorCtx = CompactRuntime.createConstructorContext(privateState, dummyCoinPublicKey);
+    const { currentContractState, currentPrivateState } = contract.initialState(constructorCtx, OWNER);
+    privateState = currentPrivateState;
+
+    circuitContext = CompactRuntime.createCircuitContext(
+      dummyContractAddress,
+      dummyCoinPublicKey,
+      currentContractState.data,
+      privateState
+    );
+
+    // Initialize contract
+    const initRes = contract.circuits.initialize(circuitContext, 'Test Token', 'TT', 18n);
+    circuitContext = CompactRuntime.createCircuitContext(
+      dummyContractAddress,
+      dummyCoinPublicKey,
+      initRes.context.currentQueryContext.state,
+      privateState
+    );
+  });
+
+  it('should let the contract circuit directly reject mint executed by a non-owner', () => {
+    expect(() => {
+      contract.circuits.mint(circuitContext, NON_OWNER, RECIPIENT, 1000n);
+    }).toThrow('FungibleToken: caller is not the owner');
+  });
+
+  it('should let the contract circuit directly reject burn executed by a non-owner', () => {
+    expect(() => {
+      contract.circuits.burn(circuitContext, NON_OWNER, 500n);
+    }).toThrow('FungibleToken: caller is not the owner');
+  });
+
+  it('should let the contract circuit directly reject transferFrom without sufficient allowance', () => {
+    expect(() => {
+      contract.circuits.transferFrom(circuitContext, NON_OWNER, OWNER, RECIPIENT, 100n);
+    }).toThrow('FungibleToken: insufficient allowance');
+  });
+
+  it('should succeed when owner executes mint and burn circuits', () => {
+    const mintRes = contract.circuits.mint(circuitContext, OWNER, OWNER, 2000n);
+    expect(mintRes.result).toBe(true);
+
+    circuitContext = CompactRuntime.createCircuitContext(
+      dummyContractAddress,
+      dummyCoinPublicKey,
+      mintRes.context.currentQueryContext.state,
+      privateState
+    );
+
+    const burnRes = contract.circuits.burn(circuitContext, OWNER, 500n);
+    expect(burnRes.result).toBe(true);
+  });
+});
