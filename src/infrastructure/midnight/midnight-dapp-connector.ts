@@ -34,21 +34,53 @@ export let lastWalletConnectorError: any = null;
 
 /**
  * Detects whether an error thrown by Lace DApp Connector indicates the wallet is locked.
+ * Strictly checks for explicit "wallet is locked" indicators, excluding timeouts,
+ * cancellations, permission rejections, and network disconnects.
  */
 export function isWalletLockedError(err: any): boolean {
   if (!err) return false;
-  const reason = typeof err.reason === 'string' ? err.reason : '';
-  const message = typeof err.message === 'string' ? err.message : '';
-  const description = typeof err.description === 'string' ? err.description : '';
-  const name = typeof err.name === 'string' ? err.name : '';
-  const code = typeof err.code === 'string' ? err.code : '';
+  if (isChannelShutdownError(err)) return false;
 
-  const combined = `${reason} ${message} ${description} ${name} ${code}`.toLowerCase();
+  const reason = typeof err.reason === 'string' ? err.reason.toLowerCase() : '';
+  const message = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+  const desc = typeof err.description === 'string' ? err.description.toLowerCase() : '';
+
+  // Exclude timeouts, cancellations, pure user rejections, and network disconnects
+  if (
+    message.includes('timed out') ||
+    reason.includes('timed out') ||
+    message.includes('timeout') ||
+    reason.includes('timeout') ||
+    message.includes('declined') ||
+    reason.includes('declined') ||
+    message.includes('cancel') ||
+    reason.includes('cancel') ||
+    ((message.includes('reject') || reason.includes('reject')) &&
+      !message.includes('wallet is locked') &&
+      !reason.includes('wallet is locked') &&
+      !message.includes('unlock') &&
+      !reason.includes('unlock')) ||
+    message.includes('denied') ||
+    reason.includes('denied') ||
+    message.includes('disconnect') ||
+    reason.includes('disconnect') ||
+    message.includes('502') ||
+    reason.includes('502')
+  ) {
+    return false;
+  }
+
+  // Explicit check for Lace wallet locked error patterns
   return (
-    combined.includes('unlock') ||
-    combined.includes('wallet is locked') ||
-    combined.includes('wallet locked') ||
-    (combined.includes('locked') && !combined.includes('unlocked'))
+    reason.includes('wallet is locked') ||
+    message.includes('wallet is locked') ||
+    desc.includes('wallet is locked') ||
+    reason.includes('wallet locked') ||
+    message.includes('wallet locked') ||
+    (reason.includes('unlock') && reason.includes('wallet')) ||
+    (message.includes('unlock') && message.includes('wallet')) ||
+    reason.includes('unlock the wallet first') ||
+    message.includes('unlock the wallet first')
   );
 }
 
@@ -104,7 +136,6 @@ export function withTimeout<T>(
       })
       .catch((err) => {
         clearTimeout(timer);
-        lastWalletConnectorError = err;
         if (isChannelShutdownError(err)) {
           console.warn(`[Midnight Lace Connector] ${opName || 'Operation'} channel shutdown detected:`, err?.message || err);
         } else {
@@ -129,7 +160,6 @@ export function safeCall<T>(
     const p = Promise.resolve().then(() => fn());
     return withTimeout(p, ms, fallback, opName);
   } catch (err: any) {
-    lastWalletConnectorError = err;
     if (isChannelShutdownError(err)) {
       console.warn(`[Midnight Lace Connector] ${opName || 'Operation'} synchronous channel shutdown:`, err?.message || err);
     } else {
@@ -216,7 +246,7 @@ export async function connectLaceWallet(
   console.log('[Midnight Lace Connector] Attempting connection. Available keys:', Object.keys(window.midnight));
   onStatusChange?.('Locating Lace extension in browser...');
 
-  // 1. Check if exact key exists
+  // 1. Check if exact key exists (e.g. mnLace or UUID)
   let targetKey = entries.find(([k]) => k.toLowerCase() === walletNameOrId.toLowerCase())?.[0];
   let walletConnector = targetKey ? window.midnight[targetKey] : undefined;
 
@@ -238,14 +268,13 @@ export async function connectLaceWallet(
     }
   }
 
-  // 3. Fallback: select any entry in window.midnight that implements connect or enable
+  // 3. Fallback: select first connector implementing connect() or enable()
   if (!walletConnector || (!isWalletConnectorObject(walletConnector) && !isWalletConnectorObject(walletConnector?.connector))) {
     const anyConnectorEntry = entries.find(([, val]) => isWalletConnectorObject(val) || isWalletConnectorObject(val?.connector));
     if (anyConnectorEntry) {
       targetKey = anyConnectorEntry[0];
       walletConnector = anyConnectorEntry[1];
     } else {
-      // Last resort: pick the first entry
       targetKey = entries[0][0];
       walletConnector = entries[0][1];
     }
@@ -260,104 +289,67 @@ export async function connectLaceWallet(
     }
   }
 
-  if (!walletConnector) {
-    throw new Error(`Wallet extension '${walletNameOrId}' was not found in window.midnight.`);
+  if (!walletConnector || (typeof walletConnector.connect !== 'function' && typeof walletConnector.enable !== 'function')) {
+    throw new Error(`Wallet extension '${walletNameOrId}' does not implement connect() or enable().`);
   }
 
-  // Verify that connect or enable is implemented
-  const hasConnect = typeof walletConnector.connect === 'function';
-  const hasEnable = typeof walletConnector.enable === 'function';
+  onStatusChange?.('Waiting for Lace authorization... (please check the Lace popup window)');
+  console.log(`[Midnight Lace Connector] Calling connect('${networkId}') on '${targetKey}'...`);
 
-  if (!hasConnect && !hasEnable) {
-    const availableProps = Object.keys(walletConnector || {}).join(', ');
-    throw new Error(
-      `Wallet connector '${targetKey}' does not implement connect() or enable(). Exposed properties: [${availableProps || 'none'}]`
-    );
-  }
+  const timeoutMs = options?.timeoutMs || 120000;
+  let timer: any = null;
 
-  onStatusChange?.('Waiting for Lace authorization... (check browser popup or Lace icon)');
-  console.log(`[Midnight Lace Connector] Triggering connect on '${targetKey}'. Please check for Lace popup...`);
-
-  // Wrap the authorization request with a 60-second timeout so it never hangs indefinitely
-  const connectPromise = (async () => {
-    let connectedApi: any;
-
-    if (hasConnect) {
-      // DApp Connector v4+ standard: connect(networkId)
-      try {
-        console.log(`[Midnight Lace Connector] Calling connect('${networkId}')...`);
-        connectedApi = await walletConnector.connect(networkId);
-      } catch (connErr: any) {
-        console.warn('[Midnight Lace Connector] connect with networkId threw:', connErr);
-        if (isWalletLockedError(connErr)) {
-          throw new Error('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
-        }
-        if (
-          connErr?.name === 'PermissionRejected' ||
-          connErr?.code === -32000 ||
-          connErr?.message?.toLowerCase().includes('reject') ||
-          connErr?.message?.toLowerCase().includes('denied')
-        ) {
-          throw connErr;
-        }
-        console.log('[Midnight Lace Connector] Retrying connect() without networkId parameter...');
-        try {
-          connectedApi = await walletConnector.connect();
-        } catch (retryErr: any) {
-          if (isWalletLockedError(retryErr)) {
-            throw new Error('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
-          }
-          throw retryErr;
-        }
-      }
-    } else {
-      // Legacy DApp Connector
-      console.log('[Midnight Lace Connector] Calling legacy enable()...');
-      try {
-        connectedApi = await walletConnector.enable();
-      } catch (enableErr: any) {
-        if (isWalletLockedError(enableErr)) {
-          throw new Error('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
-        }
-        throw enableErr;
-      }
-    }
-
-    return connectedApi;
-  })();
-
-  const timeout = options?.timeoutMs || 60000;
   try {
-    const connectedApi = await withTimeout(
-      connectPromise,
-      timeout,
-      null,
-      'connectLaceWallet authorization'
-    );
+    const connectPromise = (async () => {
+      if (typeof walletConnector.connect === 'function') {
+        return await walletConnector.connect(networkId);
+      } else {
+        return await walletConnector.enable();
+      }
+    })();
+
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('Connection timed out. Please check if the Lace popup window is open and approved.'));
+      }, timeoutMs);
+    });
+
+    const connectedApi: any = await Promise.race([connectPromise, timeoutPromise]);
+    clearTimeout(timer);
 
     if (!connectedApi) {
-      throw new Error(
-        'Connection to Lace timed out after 60 seconds. Please check if the Lace popup window is open, unlock your Lace wallet, or check if popups are blocked in your browser.'
-      );
+      throw new Error('Lace returned an empty connection handle.');
     }
 
     onStatusChange?.('Lace connected! Initializing account...');
     console.log('[Midnight Lace Connector] Connected successfully! API received:', Object.keys(connectedApi));
     return connectedApi;
   } catch (err: any) {
-    if (isWalletLockedError(err)) {
-      throw new Error('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
-    }
+    if (timer) clearTimeout(timer);
+    console.warn('[Midnight Lace Connector] connect error:', err);
+
+    // 1. User rejection / cancellation
     if (
-      err?.code === -32000 ||
+      err?.code === 'PermissionRejected' ||
+      err?.code === 'Rejected' ||
       err?.name === 'PermissionRejected' ||
       err?.message?.toLowerCase().includes('reject') ||
       err?.message?.toLowerCase().includes('denied') ||
-      err?.message?.toLowerCase().includes('cancel')
+      err?.message?.toLowerCase().includes('cancel') ||
+      err?.reason?.toLowerCase().includes('reject') ||
+      err?.reason?.toLowerCase().includes('denied')
     ) {
       throw new Error('Connection request was rejected or closed in the Lace wallet extension.');
     }
-    throw err;
+
+    // 2. Explicitly locked wallet
+    if (isWalletLockedError(err)) {
+      throw new Error('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
+    }
+
+    // 3. Specific message or reason from Lace
+    const msg = err?.reason || err?.message || 'Failed to connect to Lace wallet';
+    throw new Error(msg);
   }
 }
 
@@ -366,7 +358,6 @@ export async function connectLaceWallet(
  * so slow RPC or indexer sync never hangs the DApp.
  */
 export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionWalletBalances> {
-  lastWalletConnectorError = null;
   let tNightBigInt = 0n;
   let dustBigInt = 0n;
   let shieldedBigInt = 0n;
@@ -383,46 +374,70 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
     };
   }
 
-  // Query balances concurrently with a 6000ms timeout so slow RPC / Preprod node queries never fail prematurely
-  const [unshieldedRes, dustRes, shieldedRes, stateRes] = await Promise.allSettled([
+  const queryErrors: any[] = [];
+  const safeQuery = async <T>(
+    fn: () => Promise<T> | T,
+    ms: number,
+    opName: string
+  ): Promise<T | null> => {
+    try {
+      const p = Promise.resolve().then(() => fn());
+      let timer: any = null;
+      const timeoutP = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${opName} timed out after ${ms}ms.`));
+        }, ms);
+      });
+      const res = await Promise.race([p, timeoutP]);
+      clearTimeout(timer);
+      return res;
+    } catch (err: any) {
+      queryErrors.push(err);
+      if (isChannelShutdownError(err)) {
+        console.warn(`[Midnight Lace Connector] ${opName} channel shutdown detected:`, err?.message || err);
+      } else {
+        console.warn(`[Midnight Lace Connector] ${opName} error:`, err);
+      }
+      return null;
+    }
+  };
+
+  // Query canonical DApp Connector balance methods with 6000ms timeout
+  const [unshieldedRaw, dustRaw, shieldedRaw] = await Promise.all([
     typeof api.getUnshieldedBalances === 'function'
-      ? safeCall(() => api.getUnshieldedBalances(), 6000, null, 'getUnshieldedBalances')
+      ? safeQuery(() => api.getUnshieldedBalances(), 6000, 'getUnshieldedBalances')
       : typeof api.getUnshieldedBalance === 'function'
-      ? safeCall(() => api.getUnshieldedBalance(), 6000, null, 'getUnshieldedBalance')
+      ? safeQuery(() => api.getUnshieldedBalance(), 6000, 'getUnshieldedBalance')
       : Promise.resolve(null),
     typeof api.getDustBalance === 'function'
-      ? safeCall(() => api.getDustBalance(), 6000, null, 'getDustBalance')
+      ? safeQuery(() => api.getDustBalance(), 6000, 'getDustBalance')
       : typeof api.getDustBalances === 'function'
-      ? safeCall(() => api.getDustBalances(), 6000, null, 'getDustBalances')
+      ? safeQuery(() => api.getDustBalances(), 6000, 'getDustBalances')
       : Promise.resolve(null),
     typeof api.getShieldedBalances === 'function'
-      ? safeCall(() => api.getShieldedBalances(), 6000, null, 'getShieldedBalances')
+      ? safeQuery(() => api.getShieldedBalances(), 6000, 'getShieldedBalances')
       : typeof api.getShieldedBalance === 'function'
-      ? safeCall(() => api.getShieldedBalance(), 6000, null, 'getShieldedBalance')
-      : Promise.resolve(null),
-    typeof api.state === 'function'
-      ? safeCall(() => api.state(), 6000, null, 'state')
+      ? safeQuery(() => api.getShieldedBalance(), 6000, 'getShieldedBalance')
       : Promise.resolve(null),
   ]);
 
   console.log('[Midnight Lace Connector] Queried balances from Lace API:', {
-    unshielded: unshieldedRes.status === 'fulfilled' ? unshieldedRes.value : unshieldedRes.reason,
-    dust: dustRes.status === 'fulfilled' ? dustRes.value : dustRes.reason,
-    shielded: shieldedRes.status === 'fulfilled' ? shieldedRes.value : shieldedRes.reason,
-    state: stateRes.status === 'fulfilled' ? stateRes.value : stateRes.reason,
+    unshielded: unshieldedRaw,
+    dust: dustRaw,
+    shielded: shieldedRaw,
+    errorsCount: queryErrors.length,
   });
 
   // 1. Process unshielded tNIGHT
-  if (unshieldedRes.status === 'fulfilled' && unshieldedRes.value !== null && unshieldedRes.value !== undefined) {
-    const raw = unshieldedRes.value;
-    if (typeof raw === 'bigint') {
-      tNightBigInt = raw;
-    } else if (typeof raw === 'number' || typeof raw === 'string') {
+  if (unshieldedRaw !== null && unshieldedRaw !== undefined) {
+    if (typeof unshieldedRaw === 'bigint') {
+      tNightBigInt = unshieldedRaw;
+    } else if (typeof unshieldedRaw === 'number' || typeof unshieldedRaw === 'string') {
       try {
-        tNightBigInt = BigInt(raw);
+        tNightBigInt = BigInt(unshieldedRaw);
       } catch {}
-    } else if (typeof raw === 'object') {
-      const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
+    } else if (typeof unshieldedRaw === 'object') {
+      const entries = unshieldedRaw instanceof Map ? Array.from(unshieldedRaw.entries()) : Object.entries(unshieldedRaw);
       for (const [, val] of entries) {
         if (typeof val === 'bigint') {
           tNightBigInt += val;
@@ -433,49 +448,32 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
         }
       }
     }
-  } else if (stateRes.status === 'fulfilled' && stateRes.value?.unshieldedBalances) {
-    const raw = stateRes.value.unshieldedBalances;
-    if (typeof raw === 'bigint') {
-      tNightBigInt = raw;
-    } else if (typeof raw === 'object') {
-      const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
-      for (const [, val] of entries) {
-        if (typeof val === 'bigint') tNightBigInt += val;
-      }
-    }
   }
 
   // 2. Process DUST
-  if (dustRes.status === 'fulfilled' && dustRes.value !== null && dustRes.value !== undefined) {
-    const raw = dustRes.value;
-    if (typeof raw === 'bigint') {
-      dustBigInt = raw;
-    } else if (typeof raw === 'number' || typeof raw === 'string') {
+  if (dustRaw !== null && dustRaw !== undefined) {
+    if (typeof dustRaw === 'bigint') {
+      dustBigInt = dustRaw;
+    } else if (typeof dustRaw === 'number' || typeof dustRaw === 'string') {
       try {
-        dustBigInt = BigInt(raw);
+        dustBigInt = BigInt(dustRaw);
       } catch {}
-    } else if (typeof raw === 'object') {
-      if (raw.balance !== undefined && raw.balance !== null) {
-        dustBigInt = typeof raw.balance === 'bigint' ? raw.balance : BigInt(raw.balance.toString());
-      } else if (raw.dust !== undefined && raw.dust !== null) {
-        dustBigInt = typeof raw.dust === 'bigint' ? raw.dust : BigInt(raw.dust.toString());
+    } else if (typeof dustRaw === 'object') {
+      const obj = dustRaw as any;
+      if (obj.balance !== undefined && obj.balance !== null) {
+        dustBigInt = typeof obj.balance === 'bigint' ? obj.balance : BigInt(obj.balance.toString());
+      } else if (obj.dust !== undefined && obj.dust !== null) {
+        dustBigInt = typeof obj.dust === 'bigint' ? obj.dust : BigInt(obj.dust.toString());
       }
-    }
-  } else if (stateRes.status === 'fulfilled' && stateRes.value?.dustBalance) {
-    const raw = stateRes.value.dustBalance;
-    if (typeof raw === 'bigint') dustBigInt = raw;
-    else if (typeof raw === 'number' || typeof raw === 'string') {
-      try { dustBigInt = BigInt(raw); } catch {}
     }
   }
 
   // 3. Process Shielded balances
-  if (shieldedRes.status === 'fulfilled' && shieldedRes.value !== null && shieldedRes.value !== undefined) {
-    const raw = shieldedRes.value;
-    if (typeof raw === 'bigint') {
-      shieldedBigInt = raw;
-    } else if (typeof raw === 'object') {
-      const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
+  if (shieldedRaw !== null && shieldedRaw !== undefined) {
+    if (typeof shieldedRaw === 'bigint') {
+      shieldedBigInt = shieldedRaw;
+    } else if (typeof shieldedRaw === 'object') {
+      const entries = shieldedRaw instanceof Map ? Array.from(shieldedRaw.entries()) : Object.entries(shieldedRaw);
       for (const [, val] of entries) {
         if (typeof val === 'bigint') {
           shieldedBigInt += val;
@@ -499,16 +497,9 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
     maximumFractionDigits: 4,
   });
 
-  const isLocked = Boolean(
-    lastWalletConnectorError && isWalletLockedError(lastWalletConnectorError)
-  );
-
-  const isChannelShutdown = Boolean(
-    (lastWalletConnectorError && isChannelShutdownError(lastWalletConnectorError)) ||
-    [unshieldedRes, dustRes, shieldedRes, stateRes].some(
-      (r) => r.status === 'rejected' && isChannelShutdownError(r.reason)
-    )
-  );
+  // Evaluate error status strictly from current call results
+  const isLocked = queryErrors.some(isWalletLockedError);
+  const isChannelShutdown = queryErrors.some(isChannelShutdownError);
 
   return {
     tNightBalance: tNightBigInt.toString(),
@@ -520,9 +511,9 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
     isLocked,
     isChannelShutdown,
     errorMessage: isLocked
-      ? (lastWalletConnectorError?.reason || lastWalletConnectorError?.message || 'Wallet is locked. Please unlock the wallet first.')
+      ? 'Wallet is locked. Please unlock the wallet first.'
       : isChannelShutdown
-      ? 'Lace extension background channel was shutdown. Refreshing session...'
+      ? 'Lace extension background channel was shutdown: object can no longer be used. Please refresh session.'
       : null,
   };
 }
@@ -539,25 +530,16 @@ export async function getLaceAccountAddress(api: any): Promise<string> {
     if (api.shieldedAddress && typeof api.shieldedAddress === 'string') return api.shieldedAddress;
     if (api.address && typeof api.address === 'string') return api.address;
   } catch (err: any) {
-    if (isChannelShutdownError(err)) {
-      lastWalletConnectorError = err;
-      return '';
-    }
+    if (isChannelShutdownError(err)) return '';
   }
 
-  // Run candidate methods concurrently with safeCall and a 2000ms timeout
-  const [unshieldedRes, shieldedRes, stateRes, addrRes] = await Promise.allSettled([
+  // Run canonical DApp Connector address methods concurrently
+  const [unshieldedRes, shieldedRes] = await Promise.allSettled([
     typeof api.getUnshieldedAddress === 'function'
       ? safeCall(() => api.getUnshieldedAddress(), 2000, null, 'getUnshieldedAddress')
       : Promise.resolve(null),
     typeof api.getShieldedAddresses === 'function'
       ? safeCall(() => api.getShieldedAddresses(), 2000, null, 'getShieldedAddresses')
-      : Promise.resolve(null),
-    typeof api.state === 'function'
-      ? safeCall(() => api.state(), 2000, null, 'api.state')
-      : Promise.resolve(null),
-    typeof api.getAddress === 'function'
-      ? safeCall(() => api.getAddress(), 2000, null, 'api.getAddress')
       : Promise.resolve(null),
   ]);
 
@@ -565,7 +547,6 @@ export async function getLaceAccountAddress(api: any): Promise<string> {
     const raw = unshieldedRes.value;
     if (typeof raw === 'string' && raw.length > 0) return raw;
     if (typeof raw === 'object' && raw.unshieldedAddress) return raw.unshieldedAddress;
-    if (typeof raw === 'object' && raw.address) return raw.address;
   }
 
   if (shieldedRes.status === 'fulfilled' && shieldedRes.value) {
@@ -579,19 +560,6 @@ export async function getLaceAccountAddress(api: any): Promise<string> {
         return first.shieldedAddress || first.address;
       }
     }
-  }
-
-  if (stateRes.status === 'fulfilled' && stateRes.value) {
-    const st = stateRes.value;
-    if (st?.unshieldedAddress) return st.unshieldedAddress;
-    if (st?.shieldedAddress) return st.shieldedAddress;
-    if (st?.address) return st.address;
-  }
-
-  if (addrRes.status === 'fulfilled' && addrRes.value) {
-    const addr = addrRes.value;
-    if (typeof addr === 'string') return addr;
-    if (addr?.address) return addr.address;
   }
 
   return '';

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { MIDNIGHT_CONFIG, PRESET_IDENTITIES } from '@/src/infrastructure/config/midnight-config';
+import { isWalletLockedError } from '@/src/infrastructure/midnight/midnight-dapp-connector';
 import type { WalletIdentity } from '@/src/types/dapp';
 
 interface WalletModalProps {
@@ -59,7 +60,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({ isOpen, onClose }) => 
       setMode('lace');
       onClose();
     } catch (err: any) {
-      if (err?.message?.includes('locked') || err?.reason?.includes('locked')) {
+      if (isWalletLockedError(err)) {
         setConnectError('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar, enter your password, and try again.');
       } else {
         setConnectError(err.message || 'Failed to connect Lace wallet');
