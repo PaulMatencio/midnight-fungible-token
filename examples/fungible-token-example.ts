@@ -59,7 +59,7 @@ async function main(): Promise<void> {
     currentPrivateState
   );
 
-  let result = client.initialize(circuitCtx, 'Midnight USD', 'MUSD', 6n);
+  let result = client.initialize(circuitCtx, owner, 'Midnight USD', 'MUSD', 6n);
   currentChargedState = result.context.currentQueryContext.state;
   currentPrivateState = result.context.currentPrivateState;
 

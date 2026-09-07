@@ -827,6 +827,18 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 6: Initialize */}
         {activeTab === 'init' && (
           <form onSubmit={handleInit} className="space-y-5">
+            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
+              <div className="flex items-center gap-2">
+                <Settings className="w-4 h-4 text-blue-400" />
+                <span>
+                  Circuit: <span className="font-mono text-slate-200">initialize(caller, name, symbol, decimals)</span>
+                </span>
+              </div>
+              <span className="text-[11px] font-mono text-slate-400">
+                Owner-Authorized Circuit
+              </span>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                 Token Name

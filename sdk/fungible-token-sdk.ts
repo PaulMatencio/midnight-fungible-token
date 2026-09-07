@@ -81,9 +81,12 @@ export class FungibleTokenClient<PS extends FungibleTokenPrivateState = Fungible
   }
 
   /**
-   * Invokes the `initialize` circuit to set metadata on the token.
+   * Invokes the `initialize` circuit to set token metadata.
+   * Requires caller to be the contract owner.
+   * Can only be executed once while `_isInitialized` is false.
    *
    * @param context Circuit execution context.
+   * @param caller 32-byte address of the caller (must match contract owner).
    * @param name Token name string.
    * @param symbol Token symbol ticker.
    * @param decimals Token decimal places (0 to 255).
@@ -91,12 +94,16 @@ export class FungibleTokenClient<PS extends FungibleTokenPrivateState = Fungible
    */
   public initialize(
     context: CircuitContext<PS>,
+    caller: Uint8Array,
     name: string,
     symbol: string,
     decimals: bigint | number
   ): CircuitResults<PS, []> {
+    if (caller.length !== 32) {
+      throw new Error(`caller must be 32 bytes, received ${caller.length} bytes.`);
+    }
     const decimalsBigInt = typeof decimals === 'number' ? BigInt(decimals) : decimals;
-    return this.contractInstance.circuits.initialize(context, name, symbol, decimalsBigInt);
+    return this.contractInstance.circuits.initialize(context, caller, name, symbol, decimalsBigInt);
   }
 
   /**

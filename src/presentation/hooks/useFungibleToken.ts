@@ -779,14 +779,16 @@ export function useFungibleToken() {
   // Circuit Wrappers adhering strictly to Compact types and BigInt safety
   const initialize = useCallback(
     async (name: string, symbol: string, decimals: number | bigint) => {
+      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+      const callerBytes = hexToBytes(callerHex);
       const decBigInt = BigInt(decimals);
       return executeCircuit(
         'initialize',
-        { name, symbol, decimals: decBigInt.toString() },
-        (ctx) => clientRef.current.initialize(ctx, name, symbol, decBigInt)
+        { caller: callerHex, name, symbol, decimals: decBigInt.toString() },
+        (ctx) => clientRef.current.initialize(ctx, callerBytes, name, symbol, decBigInt)
       );
     },
-    [executeCircuit]
+    [accountAddress, mode, executeCircuit]
   );
 
   const transfer = useCallback(

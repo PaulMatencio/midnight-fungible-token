@@ -349,7 +349,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     );
 
     // Initialize token
-    const resInit = contract.circuits.initialize(circuitCtx, 'Midnight Gold', 'MDG', 6n);
+    const resInit = contract.circuits.initialize(circuitCtx, owner, 'Midnight Gold', 'MDG', 6n);
     const initChargedState = resInit.context.currentQueryContext.state;
 
     // Mint tokens to Alice (caller must be owner)
@@ -408,7 +408,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     );
 
     // First initialization succeeds
-    const resInit = contract.circuits.initialize(circuitCtx, 'Midnight Gold', 'MDG', 6n);
+    const resInit = contract.circuits.initialize(circuitCtx, owner, 'Midnight Gold', 'MDG', 6n);
     const chargedState = resInit.context.currentQueryContext.state;
 
     // Second initialization on the same charged state must throw CompactError
@@ -420,7 +420,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     );
 
     expect(() => {
-      contract.circuits.initialize(secondCtx, 'New Name', 'NEW', 18n);
+      contract.circuits.initialize(secondCtx, owner, 'New Name', 'NEW', 18n);
     }).toThrow();
   });
 
@@ -436,7 +436,7 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
 
     // 2. Initialized state (from user's initialization transaction)
     const circuitCtx = CompactRuntime.createCircuitContext(dummyCoinPubKey, dummyCoinPubKey, uninitializedState, {});
-    const initRes = contract.circuits.initialize(circuitCtx, 'Midnight Gold', 'MDG', 6n);
+    const initRes = contract.circuits.initialize(circuitCtx, owner, 'Midnight Gold', 'MDG', 6n);
     const initializedState = initRes.context.currentQueryContext.state;
     const initDecoded = ledger(initializedState);
     expect(initDecoded._isInitialized).toBe(true);
@@ -613,7 +613,7 @@ describe('Module E: Smart Contract Direct Circuit Access Control Enforcement', (
     );
 
     // Initialize contract
-    const initRes = contract.circuits.initialize(circuitContext, 'Test Token', 'TT', 18n);
+    const initRes = contract.circuits.initialize(circuitContext, OWNER, 'Test Token', 'TT', 18n);
     circuitContext = CompactRuntime.createCircuitContext(
       dummyContractAddress,
       dummyCoinPublicKey,
