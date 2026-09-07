@@ -208,19 +208,17 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
             )}
           </div>
           <div className="text-sm font-bold text-white tracking-tight font-mono flex items-center justify-between">
-            <span className="truncate max-w-[110px]" title={metadata.ownerBech32 || metadata.owner || 'Not Set'}>
-              {metadata.ownerBech32
-                ? `${metadata.ownerBech32.slice(0, 8)}...${metadata.ownerBech32.slice(-6)}`
-                : metadata.owner
-                ? `${metadata.owner.slice(0, 8)}...`
+            <span className="truncate max-w-[110px]" title={metadata.owner ? `Owner Key: 0x${metadata.owner}` : 'Not Set'}>
+              {metadata.owner
+                ? `${metadata.owner.slice(0, 6)}...${metadata.owner.slice(-4)}`
                 : 'Pending'}
             </span>
-            {(metadata.ownerBech32 || metadata.owner) && (
+            {metadata.owner && (
               <button
                 type="button"
-                onClick={() => copyToClipboard(metadata.ownerBech32 || metadata.owner || '', true)}
+                onClick={() => copyToClipboard(metadata.owner || '', true)}
                 className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                title="Copy Owner Address"
+                title="Copy Owner Hex Key"
               >
                 {copiedOwner ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
               </button>

@@ -661,7 +661,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                     </span>
                   </div>
                   <p className="text-slate-300 leading-relaxed">
-                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) can mint new tokens. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
+                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner can mint new tokens. The current caller is not the contract owner. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
                   </p>
                 </div>
               </div>
@@ -670,7 +670,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-emerald-400" />
                   <span>
-                    Owner: <span className="font-mono text-slate-200">{metadata.ownerBech32 ? `${metadata.ownerBech32.slice(0, 14)}...` : metadata.owner ? `${metadata.owner.slice(0, 10)}...` : 'Pending Init'}</span>
+                    Owner: <span className="font-mono text-slate-200">{metadata.owner ? `${metadata.owner.slice(0, 10)}...${metadata.owner.slice(-6)}` : 'Pending Init'}</span>
                   </span>
                 </div>
                 {metadata.isCallerOwner && (
@@ -752,7 +752,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                     </span>
                   </div>
                   <p className="text-slate-300 leading-relaxed">
-                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner ({metadata.ownerBech32 || `${metadata.owner.slice(0, 12)}...`}) can burn tokens. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
+                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner can burn tokens. The current caller is not the contract owner. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
                   </p>
                 </div>
               </div>
@@ -763,7 +763,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                   <span>Owner Token Burning</span>
                 </div>
                 <p className="text-slate-400 leading-relaxed">
-                  Tokens are burned directly from the contract owner&apos;s balance ({metadata.ownerBech32 ? `${metadata.ownerBech32.slice(0, 16)}...` : 'Owner'}).
+                  Tokens are burned directly from the contract owner&apos;s balance.
                 </p>
               </div>
             )}
