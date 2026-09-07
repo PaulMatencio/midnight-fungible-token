@@ -34,3 +34,9 @@ pnpm-debug.log*
 
 # Vitest Coverage
 /coverage
+
+# Contract artifact bundles
+fungible-token-v2/
+fungible-token-v2.1/
+fungible-token.v2/
+fungible.token.v2.1/
