@@ -18,7 +18,7 @@ import {
   checkInfrastructureHealth,
   type MidnightProviders,
 } from '@/src/providers/midnight-providers';
-import { isWalletLockedError } from '@/src/infrastructure/midnight/midnight-dapp-connector';
+import { isWalletLockedError, isChannelShutdownError } from '@/src/infrastructure/midnight/midnight-dapp-connector';
 import type { ActivityItem, TokenMetadata, TransactionStatus } from '@/src/types/dapp';
 import {
   queryIndexerContractState,
@@ -732,8 +732,11 @@ export function useFungibleToken() {
       } catch (err: any) {
         console.error(`[useFungibleToken] Error in ${circuitName}:`, err);
         const isLocked = isWalletLockedError(err);
+        const isShutdown = isChannelShutdownError(err);
         const errMsg = isLocked
           ? 'Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar, enter your password to unlock it, and try again.'
+          : isShutdown
+          ? 'Lace extension channel was idle/shutdown. Connection has been refreshed. Please retry your transaction.'
           : err.reason || err.message || 'Transaction failed';
 
         setTxStatus('failed');
@@ -751,9 +754,13 @@ export function useFungibleToken() {
           )
         );
 
-        showToast('error', isLocked ? 'Lace Wallet Locked' : `${circuitName} Failed`, errMsg);
+        showToast(
+          'error',
+          isLocked ? 'Lace Wallet Locked' : isShutdown ? 'Lace Channel Reconnected' : `${circuitName} Failed`,
+          errMsg
+        );
 
-        if (isLocked) {
+        if (isLocked || isShutdown) {
           refreshBalances();
         }
 

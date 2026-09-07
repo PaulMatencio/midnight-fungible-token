@@ -6,6 +6,7 @@ import {
   createLaceMidnightProvider,
   fetchExtensionWalletBalances,
   isWalletLockedError,
+  isChannelShutdownError,
 } from '../src/infrastructure/midnight/midnight-dapp-connector';
 import {
   createLaceMidnightProviders,
@@ -153,6 +154,56 @@ describe('Module A: Midnight DApp Connector & Wallet Provider', () => {
     expect(balances.isLocked).toBe(true);
     expect(balances.isSynced).toBe(false);
     expect(balances.errorMessage).toContain('Wallet is locked');
+  });
+
+  it('should accurately detect Lace background channel shutdown errors', () => {
+    // Exact user reported error
+    const exactUserError = new Error(
+      "Remote API with channel 'activity-channel' was shutdown: object can no longer be used."
+    );
+    expect(isChannelShutdownError(exactUserError)).toBe(true);
+
+    // Other channel shutdown error variants
+    expect(
+      isChannelShutdownError({
+        message: "Remote API with channel 'wallet-channel' was shutdown: object can no longer be used.",
+      })
+    ).toBe(true);
+    expect(
+      isChannelShutdownError("Remote API with channel 'activity-channel' was shutdown: object can no longer be used.")
+    ).toBe(true);
+    expect(isChannelShutdownError({ reason: 'Extension context invalidated.' })).toBe(true);
+    expect(isChannelShutdownError({ message: 'Could not establish connection. Receiving end does not exist.' })).toBe(true);
+    expect(isChannelShutdownError({ message: 'The message port closed before a response was received.' })).toBe(true);
+
+    // Unrelated errors should NOT match
+    expect(isChannelShutdownError(null)).toBe(false);
+    expect(isChannelShutdownError(undefined)).toBe(false);
+    expect(isChannelShutdownError(new Error('User rejected the transaction'))).toBe(false);
+    expect(isChannelShutdownError(new Error('Insufficient tNIGHT balance'))).toBe(false);
+    expect(isChannelShutdownError({ message: 'Network connection timeout' })).toBe(false);
+  });
+
+  it('should gracefully handle channel shutdown in fetchExtensionWalletBalances without crashing', async () => {
+    const mockShutdownLaceApi = {
+      getUnshieldedBalances: async () => {
+        throw new Error("Remote API with channel 'activity-channel' was shutdown: object can no longer be used.");
+      },
+      getDustBalance: async () => {
+        throw new Error("Remote API with channel 'activity-channel' was shutdown: object can no longer be used.");
+      },
+      getShieldedBalances: async () => {
+        throw new Error("Remote API with channel 'activity-channel' was shutdown: object can no longer be used.");
+      },
+      state: async () => {
+        throw new Error("Remote API with channel 'activity-channel' was shutdown: object can no longer be used.");
+      },
+    };
+
+    const balances = await fetchExtensionWalletBalances(mockShutdownLaceApi);
+    expect(balances.isChannelShutdown).toBe(true);
+    expect(balances.isSynced).toBe(false);
+    expect(balances.errorMessage).toContain('shutdown');
   });
 });
 

@@ -26,6 +26,7 @@ export interface ExtensionWalletBalances {
   shieldedBalance: string;
   isSynced: boolean;
   isLocked: boolean;
+  isChannelShutdown?: boolean;
   errorMessage?: string | null;
 }
 
@@ -52,6 +53,36 @@ export function isWalletLockedError(err: any): boolean {
 }
 
 /**
+ * Detects whether an error indicates that the Lace extension's background RPC channel
+ * or service worker was shutdown/closed (common after idle periods in Chrome Manifest V3).
+ */
+export function isChannelShutdownError(err: any): boolean {
+  if (!err) return false;
+  const reason = typeof err.reason === 'string' ? err.reason : '';
+  const message = typeof err.message === 'string' ? err.message : '';
+  const description = typeof err.description === 'string' ? err.description : '';
+  const name = typeof err.name === 'string' ? err.name : '';
+  const code = typeof err.code === 'string' ? String(err.code) : '';
+  const str = typeof err === 'string' ? err : '';
+  const stack = typeof err.stack === 'string' ? err.stack : '';
+
+  const combined = `${str} ${reason} ${message} ${description} ${name} ${code} ${stack}`.toLowerCase();
+
+  return (
+    combined.includes('activity-channel') ||
+    combined.includes('wallet-channel') ||
+    combined.includes('was shutdown') ||
+    combined.includes('no longer be used') ||
+    (combined.includes('channel') && combined.includes('shutdown')) ||
+    combined.includes('remote api with channel') ||
+    combined.includes('extension context invalidated') ||
+    combined.includes('receiving end does not exist') ||
+    combined.includes('message port closed') ||
+    combined.includes('port closed before a response was received')
+  );
+}
+
+/**
  * Safely awaits a promise with a maximum timeout, returning a fallback if timed out.
  */
 export function withTimeout<T>(
@@ -74,10 +105,38 @@ export function withTimeout<T>(
       .catch((err) => {
         clearTimeout(timer);
         lastWalletConnectorError = err;
-        console.warn(`[Midnight Lace Connector] ${opName || 'Operation'} error:`, err);
+        if (isChannelShutdownError(err)) {
+          console.warn(`[Midnight Lace Connector] ${opName || 'Operation'} channel shutdown detected:`, err?.message || err);
+        } else {
+          console.warn(`[Midnight Lace Connector] ${opName || 'Operation'} error:`, err);
+        }
         resolve(fallback);
       });
   });
+}
+
+/**
+ * Safely invokes a method on an external proxy object (like Lace ConnectedAPI)
+ * with both synchronous and asynchronous error protection and timeout.
+ */
+export function safeCall<T>(
+  fn: () => Promise<T> | T,
+  ms: number,
+  fallback: T,
+  opName?: string
+): Promise<T> {
+  try {
+    const p = Promise.resolve().then(() => fn());
+    return withTimeout(p, ms, fallback, opName);
+  } catch (err: any) {
+    lastWalletConnectorError = err;
+    if (isChannelShutdownError(err)) {
+      console.warn(`[Midnight Lace Connector] ${opName || 'Operation'} synchronous channel shutdown:`, err?.message || err);
+    } else {
+      console.warn(`[Midnight Lace Connector] Synchronous error in ${opName || 'operation'}:`, err);
+    }
+    return Promise.resolve(fallback);
+  }
 }
 
 /**
@@ -327,22 +386,22 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
   // Query balances concurrently with a 6000ms timeout so slow RPC / Preprod node queries never fail prematurely
   const [unshieldedRes, dustRes, shieldedRes, stateRes] = await Promise.allSettled([
     typeof api.getUnshieldedBalances === 'function'
-      ? withTimeout(Promise.resolve(api.getUnshieldedBalances()), 6000, null, 'getUnshieldedBalances')
+      ? safeCall(() => api.getUnshieldedBalances(), 6000, null, 'getUnshieldedBalances')
       : typeof api.getUnshieldedBalance === 'function'
-      ? withTimeout(Promise.resolve(api.getUnshieldedBalance()), 6000, null, 'getUnshieldedBalance')
+      ? safeCall(() => api.getUnshieldedBalance(), 6000, null, 'getUnshieldedBalance')
       : Promise.resolve(null),
     typeof api.getDustBalance === 'function'
-      ? withTimeout(Promise.resolve(api.getDustBalance()), 6000, null, 'getDustBalance')
+      ? safeCall(() => api.getDustBalance(), 6000, null, 'getDustBalance')
       : typeof api.getDustBalances === 'function'
-      ? withTimeout(Promise.resolve(api.getDustBalances()), 6000, null, 'getDustBalances')
+      ? safeCall(() => api.getDustBalances(), 6000, null, 'getDustBalances')
       : Promise.resolve(null),
     typeof api.getShieldedBalances === 'function'
-      ? withTimeout(Promise.resolve(api.getShieldedBalances()), 6000, null, 'getShieldedBalances')
+      ? safeCall(() => api.getShieldedBalances(), 6000, null, 'getShieldedBalances')
       : typeof api.getShieldedBalance === 'function'
-      ? withTimeout(Promise.resolve(api.getShieldedBalance()), 6000, null, 'getShieldedBalance')
+      ? safeCall(() => api.getShieldedBalance(), 6000, null, 'getShieldedBalance')
       : Promise.resolve(null),
     typeof api.state === 'function'
-      ? withTimeout(Promise.resolve(api.state()), 6000, null, 'state')
+      ? safeCall(() => api.state(), 6000, null, 'state')
       : Promise.resolve(null),
   ]);
 
@@ -444,16 +503,26 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
     lastWalletConnectorError && isWalletLockedError(lastWalletConnectorError)
   );
 
+  const isChannelShutdown = Boolean(
+    (lastWalletConnectorError && isChannelShutdownError(lastWalletConnectorError)) ||
+    [unshieldedRes, dustRes, shieldedRes, stateRes].some(
+      (r) => r.status === 'rejected' && isChannelShutdownError(r.reason)
+    )
+  );
+
   return {
     tNightBalance: tNightBigInt.toString(),
     tNightDisplay: formattedTNight,
     dustBalance: dustBigInt.toString(),
     dustDisplay: formattedDust,
     shieldedBalance: shieldedBigInt.toString(),
-    isSynced: !isLocked,
+    isSynced: !isLocked && !isChannelShutdown,
     isLocked,
+    isChannelShutdown,
     errorMessage: isLocked
       ? (lastWalletConnectorError?.reason || lastWalletConnectorError?.message || 'Wallet is locked. Please unlock the wallet first.')
+      : isChannelShutdown
+      ? 'Lace extension background channel was shutdown. Refreshing session...'
       : null,
   };
 }
@@ -464,24 +533,31 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
 export async function getLaceAccountAddress(api: any): Promise<string> {
   if (!api) return '';
 
-  // Synchronous checks first
-  if (api.unshieldedAddress && typeof api.unshieldedAddress === 'string') return api.unshieldedAddress;
-  if (api.shieldedAddress && typeof api.shieldedAddress === 'string') return api.shieldedAddress;
-  if (api.address && typeof api.address === 'string') return api.address;
+  try {
+    // Synchronous checks first
+    if (api.unshieldedAddress && typeof api.unshieldedAddress === 'string') return api.unshieldedAddress;
+    if (api.shieldedAddress && typeof api.shieldedAddress === 'string') return api.shieldedAddress;
+    if (api.address && typeof api.address === 'string') return api.address;
+  } catch (err: any) {
+    if (isChannelShutdownError(err)) {
+      lastWalletConnectorError = err;
+      return '';
+    }
+  }
 
-  // Run all candidate methods concurrently with a 2000ms timeout
+  // Run candidate methods concurrently with safeCall and a 2000ms timeout
   const [unshieldedRes, shieldedRes, stateRes, addrRes] = await Promise.allSettled([
     typeof api.getUnshieldedAddress === 'function'
-      ? withTimeout(Promise.resolve(api.getUnshieldedAddress()), 2000, null, 'getUnshieldedAddress')
+      ? safeCall(() => api.getUnshieldedAddress(), 2000, null, 'getUnshieldedAddress')
       : Promise.resolve(null),
     typeof api.getShieldedAddresses === 'function'
-      ? withTimeout(Promise.resolve(api.getShieldedAddresses()), 2000, null, 'getShieldedAddresses')
+      ? safeCall(() => api.getShieldedAddresses(), 2000, null, 'getShieldedAddresses')
       : Promise.resolve(null),
     typeof api.state === 'function'
-      ? withTimeout(Promise.resolve(api.state()), 2000, null, 'api.state')
+      ? safeCall(() => api.state(), 2000, null, 'api.state')
       : Promise.resolve(null),
     typeof api.getAddress === 'function'
-      ? withTimeout(Promise.resolve(api.getAddress()), 2000, null, 'api.getAddress')
+      ? safeCall(() => api.getAddress(), 2000, null, 'api.getAddress')
       : Promise.resolve(null),
   ]);
 
