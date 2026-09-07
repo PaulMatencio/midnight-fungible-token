@@ -20,6 +20,7 @@ import { useWallet } from '@/src/presentation/context/WalletContext';
 import type { TokenMetadata } from '@/src/types/dapp';
 
 interface ContractOverviewProps {
+  contractAddress?: string;
   metadata: TokenMetadata;
   userBalance: bigint;
   infraStatus?: { proofServer: boolean; indexer: boolean };
@@ -27,11 +28,13 @@ interface ContractOverviewProps {
 }
 
 export const ContractOverview: React.FC<ContractOverviewProps> = ({
+  contractAddress,
   metadata,
   userBalance,
   infraStatus,
   onResetContractState,
 }) => {
+  const targetContractAddress = contractAddress || MIDNIGHT_CONFIG.contractAddress;
   const { mode, accountAddress, activeIdentity, isConnected, connectWallet } = useWallet();
   const [copiedAddr, setCopiedAddr] = useState(false);
   const [copiedOwner, setCopiedOwner] = useState(false);
@@ -85,19 +88,19 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 font-mono text-sm text-slate-200">
-            <span className="truncate max-w-xs md:max-w-md" title={MIDNIGHT_CONFIG.contractAddress}>
-              {MIDNIGHT_CONFIG.contractAddress}
+            <span className="truncate max-w-xs md:max-w-md" title={targetContractAddress}>
+              {targetContractAddress}
             </span>
             <button
               type="button"
-              onClick={() => copyToClipboard(MIDNIGHT_CONFIG.contractAddress)}
+              onClick={() => copyToClipboard(targetContractAddress)}
               className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
               title="Copy Address"
             >
               {copiedAddr ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
             <a
-              href={getExplorerContractUrl(MIDNIGHT_CONFIG.contractAddress)}
+              href={getExplorerContractUrl(targetContractAddress)}
               target="_blank"
               rel="noreferrer"
               className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
@@ -109,10 +112,11 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
               <button
                 type="button"
                 onClick={onResetContractState}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/20 text-xs font-medium transition-all"
                 title="Reset local contract state / cache (start fresh or re-initialize)"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset Cache</span>
               </button>
             )}
           </div>

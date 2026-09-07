@@ -15,13 +15,19 @@ import {
   Wallet,
   Lock,
   ShieldCheck,
+  RotateCcw,
+  Copy,
+  Check,
+  ExternalLink,
 } from 'lucide-react';
-import { PRESET_IDENTITIES } from '@/src/infrastructure/config/midnight-config';
+import { PRESET_IDENTITIES, MIDNIGHT_CONFIG, getExplorerContractUrl } from '@/src/infrastructure/config/midnight-config';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { bech32m } from '@scure/base';
 import type { TokenMetadata, TransactionStatus } from '@/src/types/dapp';
 
 interface TokenActionsProps {
+  contractAddress?: string;
+  onResetContractState?: () => void;
   metadata: TokenMetadata;
   txStatus: TransactionStatus;
   callerAddress?: string | null;
@@ -37,6 +43,8 @@ interface TokenActionsProps {
 type TabType = 'transfer' | 'approve' | 'transferFrom' | 'mint' | 'burn' | 'init';
 
 export const TokenActions: React.FC<TokenActionsProps> = ({
+  contractAddress,
+  onResetContractState,
   metadata,
   txStatus,
   callerAddress,
@@ -48,6 +56,13 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
   onBurn,
   onInitialize,
 }) => {
+  const targetContractAddress = contractAddress || MIDNIGHT_CONFIG.contractAddress;
+  const [copiedContractAddr, setCopiedContractAddr] = useState(false);
+  const copyContractAddress = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedContractAddr(true);
+    setTimeout(() => setCopiedContractAddr(false), 2000);
+  };
   const {
     mode,
     accountAddress,
@@ -271,6 +286,56 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
 
   return (
     <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-xl shadow-xl">
+      {/* Contract Address & Reset Bar */}
+      <div className="bg-slate-950/90 border-b border-slate-800/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">
+            Contract:
+          </span>
+          <span
+            className="font-mono text-xs text-slate-200 truncate max-w-[200px] sm:max-w-xs md:max-w-md bg-slate-900 px-2 py-0.5 rounded border border-slate-800"
+            title={targetContractAddress}
+          >
+            {targetContractAddress}
+          </span>
+          <button
+            type="button"
+            onClick={() => copyContractAddress(targetContractAddress)}
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            title="Copy Contract Address"
+          >
+            {copiedContractAddr ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+          <a
+            href={getExplorerContractUrl(targetContractAddress)}
+            target="_blank"
+            rel="noreferrer"
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            title="View on Midnight Explorer"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
+            <span className={`w-1.5 h-1.5 rounded-full ${metadata.isInitialized ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+            {metadata.isInitialized ? 'Initialized' : 'Uninitialized'}
+          </span>
+        </div>
+
+        {onResetContractState && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={onResetContractState}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/30 text-xs font-semibold shadow-sm transition-all"
+              title="Reset local contract state / cache (purges cache and re-syncs from on-chain)"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Cache</span>
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Test Mode Active Caller Switcher Bar */}
       {mode === 'test' && (
         <div className="bg-slate-950/80 border-b border-slate-800/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3">

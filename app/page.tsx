@@ -387,6 +387,14 @@ export default function HomePage() {
           {/* Tab 1: Interactive Circuit Actions */}
           {activeTab === 'actions' && (
             <div className="space-y-6 animate-in fade-in duration-200">
+              <ContractOverview
+                contractAddress={config.contractAddress}
+                metadata={metadata}
+                userBalance={userBalance}
+                infraStatus={infraStatus}
+                onResetContractState={resetContractCache}
+              />
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">Contract Actions</h2>
@@ -403,6 +411,8 @@ export default function HomePage() {
               </div>
 
               <TokenActions
+                contractAddress={config.contractAddress}
+                onResetContractState={resetContractCache}
                 metadata={metadata}
                 txStatus={txStatus}
                 callerAddress={accountAddress}
@@ -430,6 +440,7 @@ export default function HomePage() {
               />
 
               <ContractOverview
+                contractAddress={config.contractAddress}
                 metadata={metadata}
                 userBalance={userBalance}
                 infraStatus={infraStatus}
