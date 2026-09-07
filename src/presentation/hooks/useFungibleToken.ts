@@ -177,13 +177,13 @@ export function extractMetadata(
   const ownerHex = ownerBytes && ownerBytes.length === 32 ? bytesToHex(ownerBytes) : undefined;
   const ownerBech32 = ownerBytes && ownerBytes.length === 32 ? formatBech32Address(ownerBytes, networkId) : undefined;
 
+  const isInit = Boolean(decoded._isInitialized);
+
   let isCallerOwner = false;
-  if (ownerHex && currentCaller) {
+  if (isInit && ownerHex && currentCaller) {
     const callerCleanHex = addressToHex32(currentCaller).toLowerCase();
     isCallerOwner = callerCleanHex === ownerHex.toLowerCase();
   }
-
-  const isInit = Boolean(decoded._isInitialized);
 
   return {
     name: decoded._name || (isInit ? 'Midnight Fungible Token' : 'Uninitialized Token'),
@@ -191,8 +191,8 @@ export function extractMetadata(
     decimals: Number(decoded._decimals !== undefined ? decoded._decimals : 0n),
     totalSupply: decoded._totalSupply || 0n,
     isInitialized: isInit,
-    owner: ownerHex,
-    ownerBech32,
+    owner: isInit ? ownerHex : undefined,
+    ownerBech32: isInit ? ownerBech32 : undefined,
     isCallerOwner,
   };
 }
@@ -522,7 +522,7 @@ export function useFungibleToken() {
       };
       setMetadata((prev) => {
         const isCallerOwner = Boolean(
-          prev.owner && addressToHex32(accountAddress).toLowerCase() === prev.owner.toLowerCase()
+          prev.isInitialized && prev.owner && addressToHex32(accountAddress).toLowerCase() === prev.owner.toLowerCase()
         );
         return { ...prev, isCallerOwner };
       });

@@ -205,19 +205,19 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
             <span className="flex items-center gap-1.5">
               <Crown className="w-3.5 h-3.5 text-amber-400" /> Contract Owner
             </span>
-            {metadata.isCallerOwner && (
+            {metadata.isInitialized && metadata.isCallerOwner && (
               <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 You
               </span>
             )}
           </div>
           <div className="text-sm font-bold text-white tracking-tight font-mono flex items-center justify-between">
-            <span className="truncate max-w-[110px]" title={metadata.owner ? `Owner Key: 0x${metadata.owner}` : 'Not Set'}>
-              {metadata.owner
+            <span className="truncate max-w-[110px]" title={metadata.isInitialized && metadata.owner ? `Owner Key: 0x${metadata.owner}` : 'Contract Uninitialized'}>
+              {metadata.isInitialized && metadata.owner
                 ? `${metadata.owner.slice(0, 6)}...${metadata.owner.slice(-4)}`
-                : 'Pending'}
+                : 'Pending Init'}
             </span>
-            {metadata.owner && (
+            {metadata.isInitialized && metadata.owner && (
               <button
                 type="button"
                 onClick={() => copyToClipboard(metadata.owner || '', true)}
@@ -229,7 +229,7 @@ export const ContractOverview: React.FC<ContractOverviewProps> = ({
             )}
           </div>
           <div className="text-[11px] text-slate-500 mt-1 font-mono">
-            {metadata.isCallerOwner ? 'Exclusive Mint/Burn Rights' : 'FungibleTokenV2 Owner'}
+            {!metadata.isInitialized ? 'Pending Initialization' : (metadata.isCallerOwner ? 'Exclusive Mint/Burn Rights' : 'FungibleToken Owner')}
           </div>
         </div>
 

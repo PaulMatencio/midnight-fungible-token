@@ -347,16 +347,18 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 font-medium">Acting Caller:</span>
                 <span className="text-xs font-semibold text-white">
-                  {activeIdentity?.name || (metadata.isCallerOwner ? 'Alice' : 'Bob')}
+                  {activeIdentity?.name || 'Alice'}
                 </span>
-                {metadata.isCallerOwner ? (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    Owner
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    Non-Owner ({activeIdentity?.label || 'Trader'})
-                  </span>
+                {metadata.isInitialized && (
+                  metadata.isCallerOwner ? (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Owner
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                      {activeIdentity?.label || 'Trader'}
+                    </span>
+                  )
                 )}
               </div>
               <p className="text-[10px] font-mono text-slate-500">
@@ -369,7 +371,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
             <span className="text-[11px] text-slate-400 mr-1">Switch Caller:</span>
             {PRESET_IDENTITIES.slice(0, 3).map((p) => {
               const isCurrent = (accountAddress || PRESET_IDENTITIES[0].addressHex).toLowerCase() === p.addressHex.toLowerCase();
-              const isOwner = p.addressHex.toLowerCase() === (metadata.owner || PRESET_IDENTITIES[0].addressHex).toLowerCase();
+              const isOwner = Boolean(metadata.isInitialized && metadata.owner && p.addressHex.toLowerCase() === metadata.owner.toLowerCase());
               return (
                 <button
                   key={p.name}
@@ -385,9 +387,11 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                   }`}
                 >
                   <span>{p.name}</span>
-                  <span className={`text-[9px] ${isOwner ? 'text-emerald-300' : 'text-slate-400'}`}>
-                    {isOwner ? '(Owner)' : '(Non-Owner)'}
-                  </span>
+                  {metadata.isInitialized && isOwner && (
+                    <span className="text-[9px] text-emerald-300 font-semibold">
+                      (Owner)
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -714,37 +718,17 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 4: Mint */}
         {activeTab === 'mint' && (
           <form onSubmit={handleMint} className="space-y-5">
-            {/* Owner Permission Alert */}
-            {metadata.owner && !metadata.isCallerOwner ? (
-              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <div className="font-semibold flex items-center gap-1.5">
-                    <span>Owner-Only Circuit (FungibleTokenV2)</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/30">
-                      Caller: {mode === 'test' ? activeIdentity?.name || 'Bob' : 'Connected Wallet'} (Non-Owner)
-                    </span>
-                  </div>
-                  <p className="text-slate-300 leading-relaxed">
-                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner can mint new tokens. The current caller is not the contract owner. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
-                  </p>
-                </div>
+            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>
+                  Circuit: <span className="font-mono text-slate-200">mint(caller, to, value)</span>
+                </span>
               </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>
-                    Owner: <span className="font-mono text-slate-200">{metadata.owner ? `${metadata.owner.slice(0, 10)}...${metadata.owner.slice(-6)}` : 'Pending Init'}</span>
-                  </span>
-                </div>
-                {metadata.isCallerOwner && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    You are Owner
-                  </span>
-                )}
-              </div>
-            )}
+              <span className="text-[11px] font-mono text-slate-400">
+                {metadata.isInitialized && metadata.owner ? `Owner: ${metadata.owner.slice(0, 6)}...${metadata.owner.slice(-4)}` : 'Pending Init'}
+              </span>
+            </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -786,17 +770,9 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
             <button
               type="submit"
               disabled={isExecuting}
-              className={`w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 ${
-                !metadata.isCallerOwner
-                  ? 'bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white shadow-amber-500/20'
-                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-500/20'
-              }`}
+              className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isExecuting
-                ? 'Executing Circuit...'
-                : !metadata.isCallerOwner
-                ? `Execute Mint as Non-Owner (Expect Contract Rejection)`
-                : 'Mint Tokens'}
+              {isExecuting ? 'Executing Circuit...' : 'Mint Tokens'}
               <PlusCircle className="w-4 h-4" />
             </button>
           </form>
@@ -805,33 +781,17 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 5: Burn */}
         {activeTab === 'burn' && (
           <form onSubmit={handleBurn} className="space-y-5">
-            {/* Owner Permission Alert / Info */}
-            {metadata.owner && !metadata.isCallerOwner ? (
-              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <div className="font-semibold flex items-center gap-1.5">
-                    <span>Owner-Only Circuit (FungibleTokenV2)</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/30">
-                      Caller: {mode === 'test' ? activeIdentity?.name || 'Bob' : 'Connected Wallet'} (Non-Owner)
-                    </span>
-                  </div>
-                  <p className="text-slate-300 leading-relaxed">
-                    Under <span className="font-mono text-amber-300">FungibleTokenV2</span>, only the contract owner can burn tokens. The current caller is not the contract owner. You can execute this circuit to test and verify that the smart contract rejects this transaction with <code className="text-amber-300 font-mono">FungibleToken: caller is not the owner</code>.
-                  </p>
-                </div>
+            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-rose-400" />
+                <span>
+                  Circuit: <span className="font-mono text-slate-200">burn(caller, value)</span>
+                </span>
               </div>
-            ) : (
-              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs space-y-1">
-                <div className="font-semibold text-slate-300 flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Owner Token Burning</span>
-                </div>
-                <p className="text-slate-400 leading-relaxed">
-                  Tokens are burned directly from the contract owner&apos;s balance.
-                </p>
-              </div>
-            )}
+              <span className="text-[11px] font-mono text-slate-400">
+                {metadata.isInitialized && metadata.owner ? `Owner: ${metadata.owner.slice(0, 6)}...${metadata.owner.slice(-4)}` : 'Pending Init'}
+              </span>
+            </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -856,17 +816,9 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
             <button
               type="submit"
               disabled={isExecuting}
-              className={`w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 ${
-                !metadata.isCallerOwner
-                  ? 'bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white shadow-amber-500/20'
-                  : 'bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-500 hover:to-orange-500 text-white shadow-rose-500/20'
-              }`}
+              className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-500 hover:to-orange-500 text-white transition-all shadow-lg shadow-rose-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isExecuting
-                ? 'Executing Circuit...'
-                : !metadata.isCallerOwner
-                ? `Execute Burn as Non-Owner (Expect Contract Rejection)`
-                : 'Burn Tokens'}
+              {isExecuting ? 'Executing Circuit...' : 'Burn Tokens'}
               <Flame className="w-4 h-4" />
             </button>
           </form>
