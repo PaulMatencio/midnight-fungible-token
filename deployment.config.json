@@ -1,6 +1,6 @@
 {
   "contractName": "fungible-token-v2.1",
-  "contractAddress": "a712dfc2a197e29871b07eb665f34e0b7931686db6e5524dc454ed67b698ca6d",
+  "contractAddress": "853b1938397aac46e0fff9a100d248cc5101d0a6449e9a164a4ea9d25572dc3e",
   "networkId": "preprod",
   "indexerUrl": "https://indexer.preprod.midnight.network/api/v4/graphql",
   "indexerWsUrl": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",

@@ -1,0 +1,280 @@
+
+﻿
+4
+index-58e0b4e06b17a8…c62d86d1beb.js:4085 Uncaught (in promise) t: Remote API with channel 'activity-channel' was shutdown: object can no longer be used.
+    at index-58e0b4e06b17a8…6d1beb.js:4085:1704
+    at async Proxy.<anonymous> (index-58e0b4e06b17a8…6d1beb.js:4085:1096)
+sw-script.js:1 Wallet.Sync: [object CloseEvent]
+    at 9859.js:182:83129
+    at sw-script.js:451:223810
+    at onFail (sw-script.js:451:223872)
+    at Object.failCase (sw-script.js:451:226780)
+    at sw-script.js:451:227330
+    at sw-script.js:451:103800
+    at sw-script.js:451:226735
+    at sw-script.js:451:103698
+    at sw-script.js:451:223845
+    at sw-script.js:451:103698
+    at sw-script.js:451:223797
+    at sw-script.js:451:103731
+    at ContinuationKImpl.onHalt (9859.js:182:189815)
+    at ChannelExecutor.doneHalt (9859.js:182:208657)
+    at EffectPrimitive.effect_instruction_i0 (9859.js:182:209057)
+    at sw-script.js:451:386017
+    at effect_internal_function (sw-script.js:451:215301)
+    at FiberRuntime.Sync (sw-script.js:451:386010)
+    at sw-script.js:451:389680
+    at Object.context (sw-script.js:451:493211)
+    at FiberRuntime.runLoop (sw-script.js:451:389294)
+    at FiberRuntime.evaluateEffect (sw-script.js:451:383920)
+    at FiberRuntime.evaluateMessageWhileSuspended (sw-script.js:451:383545)
+    at FiberRuntime.drainQueueOnCurrentThread (sw-script.js:451:380959)
+    at Array.run (sw-script.js:451:390002)
+    at starveInternal (sw-script.js:451:151556)
+    at sw-script.js:451:152452
+sw-script.js:1 Wallet.Sync: [object CloseEvent]
+    at 6406.js:1:14811
+    at sw-script.js:451:223810
+    at onFail (sw-script.js:451:223872)
+    at Object.failCase (sw-script.js:451:226780)
+    at sw-script.js:451:227330
+    at sw-script.js:451:103800
+    at sw-script.js:451:226735
+    at sw-script.js:451:103698
+    at sw-script.js:451:223845
+    at sw-script.js:451:103698
+    at sw-script.js:451:223797
+    at sw-script.js:451:103731
+    at ContinuationKImpl.onHalt (9859.js:182:189815)
+    at ChannelExecutor.doneHalt (9859.js:182:208657)
+    at EffectPrimitive.effect_instruction_i0 (9859.js:182:209057)
+    at sw-script.js:451:386017
+    at effect_internal_function (sw-script.js:451:215301)
+    at FiberRuntime.Sync (sw-script.js:451:386010)
+    at sw-script.js:451:389680
+    at Object.context (sw-script.js:451:493211)
+    at FiberRuntime.runLoop (sw-script.js:451:389294)
+    at FiberRuntime.evaluateEffect (sw-script.js:451:383920)
+    at FiberRuntime.evaluateMessageWhileSuspended (sw-script.js:451:383545)
+    at FiberRuntime.drainQueueOnCurrentThread (sw-script.js:451:380959)
+    at Array.run (sw-script.js:451:390002)
+    at starveInternal (sw-script.js:451:151556)
+    at sw-script.js:451:152452
+sw-script.js:1 Wallet.Sync: [object CloseEvent]
+    at 9859.js:12:340779
+    at sw-script.js:451:223810
+    at onFail (sw-script.js:451:223872)
+    at Object.failCase (sw-script.js:451:226780)
+    at sw-script.js:451:227330
+    at sw-script.js:451:103800
+    at sw-script.js:451:226735
+    at sw-script.js:451:103698
+    at sw-script.js:451:223845
+    at sw-script.js:451:103698
+    at sw-script.js:451:223797
+    at sw-script.js:451:103731
+    at ContinuationKImpl.onHalt (9859.js:182:189815)
+    at ChannelExecutor.doneHalt (9859.js:182:208657)
+    at EffectPrimitive.effect_instruction_i0 (9859.js:182:209057)
+    at sw-script.js:451:386017
+    at effect_internal_function (sw-script.js:451:215301)
+    at FiberRuntime.Sync (sw-script.js:451:386010)
+    at sw-script.js:451:389680
+    at Object.context (sw-script.js:451:493211)
+    at FiberRuntime.runLoop (sw-script.js:451:389294)
+    at FiberRuntime.evaluateEffect (sw-script.js:451:383920)
+    at FiberRuntime.evaluateMessageWhileSuspended (sw-script.js:451:383545)
+    at FiberRuntime.drainQueueOnCurrentThread (sw-script.js:451:380959)
+    at Array.run (sw-script.js:451:390002)
+    at starveInternal (sw-script.js:451:151556)
+    at sw-script.js:451:152452
+sw-script.js:1 2026-09-07 10:34:01        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:01        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:03        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:03        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:06        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-mainnet-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:06        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-mainnet-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:09        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-mainnet-rpc/ws: 1000:: Normal Closure
+sw-script.js:1 2026-09-07 10:34:09        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-mainnet-rpc/ws: 1000:: Normal Closure
+
+
+
+sw-script.js:1 Failed to fetch token prices: TypeError: Failed to fetch
+﻿
+this is what  I get in the  lace  extension error log  when I  turn off/ turn on  the blue butoton on the  lace extension card.   
+
+WebSocket connection to 'wss://blockfrost.lw.iog.io/midnight-mainnet-rpc/ws' 
+failed: Error during WebSocket handshake: Unexpected response code: 502
+
+
+1. Why WebSocket connection to 'wss://blockfrost.lw.iog.io/midnight-mainnet-rpc/ws' failed: 502
+Root Cause: blockfrost.lw.iog.io is IOG’s hosted backend infrastructure that the Lace extension connects to. A 502 Bad Gateway response means the Blockfrost gateway cannot reach the upstream Midnight Mainnet RPC node (or that Mainnet is currently offline / not yet open).
+
+
+
+Error from Lace extension console 
+
+2index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085 Uncaught (in promise) t: Remote API with channel 'redux-store' was shutdown: object can no longer be used.
+    at index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085:1704
+    at async Proxy.<anonymous> (index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085:1096)
+8index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085 Uncaught (in promise) t: Remote API with channel 'activity-channel' was shutdown: object can no longer be used.
+    at index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085:1704
+    at async Proxy.<anonymous> (index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085:1096)
+
+
+9index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085 Uncaught (in promise) t: Remote API with channel 'activity-channel' was shutdown: object can no longer be used.
+    at index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085:1704
+    at async Proxy.<anonymous> (index-58e0b4e06b17a8bcb267cc62d86d1beb.js:4085:10
+
+
+After stopping and starting the lace extension .  No error so far ,
+First error  occured  when  starting to connect to the wallet the the conection timed out 
+
+sw-script.js:1 2026-09-07 15:14:23        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+(anonymous) @ sw-script.js:1
+apply @ 9859.js:12
+error @ 9859.js:12
+logErrorMessage @ 9859.js:1
+errorHandler @ 9859.js:1
+(anonymous) @ 9859.js:1
+Promise.catch
+(anonymous) @ 9859.js:1
+_createSubscriber @ 9859.js:1
+(anonymous) @ 9859.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ 9859.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+_subscribeUpdates @ 9859.js:1
+_metaFromChain @ 9859.js:1
+sw-script.js:1 2026-09-07 15:14:23        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+(anonymous) @ sw-script.js:1
+apply @ 9859.js:12
+error @ 9859.js:12
+logErrorMessage @ 9859.js:1
+(anonymous) @ 9859.js:1
+Promise.catch
+(anonymous) @ 9859.js:1
+execFinalizer @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+execFinalizer @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+execFinalizer @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+execFinalizer @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorHandler @ 9859.js:1
+(anonymous) @ 9859.js:1
+Promise.catch
+(anonymous) @ 9859.js:1
+_createSubscriber @ 9859.js:1
+(anonymous) @ 9859.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ 9859.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+_subscribeUpdates @ 9859.js:1
+_metaFromChain @ 9859.js:1
+sw-script.js:1 2026-09-07 15:14:23        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure
+(anonymous) @ sw-script.js:1
+apply @ 9859.js:12
+error @ 9859.js:12
+logErrorMessage @ 9859.js:1
+errorHandler @ 9859.js:1
+(anonymous) @ 9859.js:1
+Promise.catch
+(anonymous) @ 9859.js:1
+_createSubscriber @ 9859.js:1
+(anonymous) @ 9859.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ 9859.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+errorContext @ sw-script.js:1
+(anonymous) @ sw-script.js:1
+_subscribeUpdates @ 9859.js:1
+_metaFromChain @ 9859.js:1
+await in _metaFromChain
+_loadMeta @ 9859.js:1
+#b @ 9859.js:1
+await in #b
+(anonymous) @ 9859.js:1
+(anonymous) @ 9859.js:1
+#eH @ 9859.js:1
+#eL @ 9859.js:1
+sw-script.js:1 2026-09-07 15:14:23        RPC-CORE: subscribeRuntimeVersion(): RuntimeVersion:: disconnected from wss://blockfrost.lw.iog.io/midnight-preprod-rpc/ws: 1000:: Normal Closure

@@ -11,6 +11,7 @@ import {
 import { ledger } from '@/src/contracts/fungible-token/contract/index.js';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useToast } from '@/src/presentation/context/ToastContext';
+import { useConfig } from '@/src/presentation/context/ConfigContext';
 import { MIDNIGHT_CONFIG, PRESET_IDENTITIES } from '@/src/infrastructure/config/midnight-config';
 import {
   createLaceMidnightProviders,
@@ -200,6 +201,8 @@ export function extractMetadata(
 export function useFungibleToken() {
   const { mode, accountAddress, isConnected, extensionApi, refreshBalances } = useWallet();
   const { showToast } = useToast();
+  const { config } = useConfig();
+  const activeContractAddress = config?.contractAddress || MIDNIGHT_CONFIG.contractAddress;
 
   // Mode-dependent metadata
   const [metadata, setMetadata] = useState<TokenMetadata>({
@@ -244,7 +247,7 @@ export function useFungibleToken() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`);
+        const saved = localStorage.getItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed)) {
@@ -265,7 +268,7 @@ export function useFungibleToken() {
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem(
-          `${ACTIVITY_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`,
+          `${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`,
           JSON.stringify(activityLog.slice(0, 30))
         );
       } catch {}
@@ -322,7 +325,7 @@ export function useFungibleToken() {
     // 1. Check browser localStorage cache first (immediate restoration on reload)
     if (typeof window !== 'undefined') {
       try {
-        const cachedRaw = localStorage.getItem(`${LACE_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`);
+        const cachedRaw = localStorage.getItem(`${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`);
         if (cachedRaw) {
           const restoredState = deserializeChargedState(cachedRaw);
           if (restoredState) {
@@ -336,7 +339,7 @@ export function useFungibleToken() {
 
         // Secondary fallback check for stored metadata
         if (!cachedDecoded) {
-          const cachedMetaRaw = localStorage.getItem(`${TOKEN_META_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`);
+          const cachedMetaRaw = localStorage.getItem(`${TOKEN_META_KEY_PREFIX}${activeContractAddress}`);
           if (cachedMetaRaw) {
             const parsedMeta = JSON.parse(cachedMetaRaw);
             if (parsedMeta && parsedMeta.isInitialized) {
@@ -384,7 +387,7 @@ export function useFungibleToken() {
     try {
       const providers = createLaceMidnightProviders(extensionApi || {});
       const onChainState = await providers.publicDataProvider.queryContractState(
-        MIDNIGHT_CONFIG.contractAddress
+        activeContractAddress
       );
 
       if (onChainState && onChainState.data) {
@@ -402,10 +405,10 @@ export function useFungibleToken() {
             try {
               const serialized = serializeChargedState(onChainState.data);
               if (serialized) {
-                localStorage.setItem(`${LACE_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`, serialized);
+                localStorage.setItem(`${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`, serialized);
               }
               localStorage.setItem(
-                `${TOKEN_META_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`,
+                `${TOKEN_META_KEY_PREFIX}${activeContractAddress}`,
                 JSON.stringify({
                   name: meta.name,
                   symbol: meta.symbol,
@@ -467,12 +470,12 @@ export function useFungibleToken() {
 
     // Default clean uninitialized state for Lace mode
     setMetadata(extractMetadata(decoded, accountAddress));
-  }, [extensionApi, accountAddress]);
+  }, [extensionApi, accountAddress, activeContractAddress]);
 
   // Query on-chain indexer for full token metadata & account distribution report
   const fetchIndexerReport = useCallback(
     async (overrideAddress?: string, overrideUrl?: string): Promise<IndexerTokenReport | null> => {
-      const targetAddr = overrideAddress || MIDNIGHT_CONFIG.contractAddress;
+      const targetAddr = overrideAddress || activeContractAddress;
       const targetUrl = overrideUrl || MIDNIGHT_CONFIG.indexerUrl;
       setIsQueryingIndexer(true);
       try {
@@ -496,7 +499,7 @@ export function useFungibleToken() {
   const synchronizedLedgerReport = useMemo<IndexerTokenReport | null>(() => {
     if (!ledgerState) return null;
     return calculateAccountSharesFromLedger(ledgerState, {
-      contractAddress: MIDNIGHT_CONFIG.contractAddress,
+      contractAddress: activeContractAddress,
       currentUserAddress: accountAddress,
       networkId: MIDNIGHT_CONFIG.networkId,
       source: mode === 'test' ? 'simulated' : 'local_cache',
@@ -592,7 +595,7 @@ export function useFungibleToken() {
 
         const coinPubKey = addressToHex32(providers.walletProvider.getCoinPublicKey());
         const circuitCtx = CompactRuntime.createCircuitContext(
-          MIDNIGHT_CONFIG.contractAddress,
+          activeContractAddress,
           coinPubKey,
           currentActiveChargedState,
           privateStateRef.current
@@ -640,7 +643,7 @@ export function useFungibleToken() {
               const serialized = serializeChargedState(updatedChargedState);
               if (serialized) {
                 localStorage.setItem(
-                  `${LACE_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`,
+                  `${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`,
                   serialized
                 );
               }
@@ -654,7 +657,7 @@ export function useFungibleToken() {
                 ownerBech32: meta.ownerBech32,
               };
               localStorage.setItem(
-                `${TOKEN_META_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`,
+                `${TOKEN_META_KEY_PREFIX}${activeContractAddress}`,
                 JSON.stringify(metaPayload)
               );
             } catch (err) {
@@ -742,7 +745,7 @@ export function useFungibleToken() {
         throw err;
       }
     },
-    [mode, extensionApi, showToast, refreshBalances]
+    [mode, extensionApi, showToast, refreshBalances, activeContractAddress]
   );
 
   // Direct queries (read-only) against current decoded ledger state
@@ -876,9 +879,9 @@ export function useFungibleToken() {
   const resetContractCache = useCallback(() => {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.removeItem(`${LACE_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`);
-        localStorage.removeItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`);
-        localStorage.removeItem(`${TOKEN_META_KEY_PREFIX}${MIDNIGHT_CONFIG.contractAddress}`);
+        localStorage.removeItem(`${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+        localStorage.removeItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+        localStorage.removeItem(`${TOKEN_META_KEY_PREFIX}${activeContractAddress}`);
       } catch (e) {
         console.warn('[useFungibleToken] Failed to clear localStorage:', e);
       }
