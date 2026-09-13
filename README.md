@@ -11,6 +11,9 @@ A zero-knowledge confidential smart contract and full-featured decentralized app
 
 > Built with Compact on Midnight Network.
 
+> [!IMPORTANT]
+> **Upfront Deployment Requirement**: The `fungible-token` Compact smart contract must be deployed upfront using the **`midnight-compact-studio`** DApp. The generated Compact SDK, compiled contract artifacts (`contract/`, `zkir/`), and `deployment.config.json` are exported from Midnight Compact Studio and merged into this repository.
+
 ---
 
 ## What's New in Compact v2.3
@@ -75,7 +78,7 @@ circuit authenticate(account: Bytes<32>): [] {
   assert(derivedAccount == account, "FungibleToken: caller authorization failed");
 }
 ```
-
+ 
 ---
 
 ## Circuit Reference
@@ -134,6 +137,58 @@ The web interface is built with **Next.js 15**, **React 19**, and **Tailwind CSS
 ├── deployment.config.json             # Network & contract connection parameters
 └── package.json
 ```
+
+---
+
+## Deployment & Artifact Workflow
+
+This repository operates on a two-stage decoupled architecture:
+
+```
+┌────────────────────────────────────────┐
+│      midnight-compact-studio DApp      │
+│  - Compile Compact v2.3 contract       │
+│  - Set constructor parameters          │
+│  - Deploy on-chain (Preprod/Preview)   │
+└──────────────────┬─────────────────────┘
+                   │
+                   ▼  Export Artifacts Bundle
+┌────────────────────────────────────────┐
+│    Merged into this DApp Repository    │
+│  - deployment.config.json              │
+│  - contract/ (compiled JS & types)     │
+│  - zkir/ (circuit ZK intermediate rep) │
+│  - sdk/ (TypeScript client adapter)    │
+└──────────────────┬─────────────────────┘
+                   │
+                   ▼  Run Frontend DApp
+┌────────────────────────────────────────┐
+│     Fungible Token Web Cockpit         │
+│  - Connects via deployment.config.json │
+│  - Interacts via Lace DApp Connector   │
+└────────────────────────────────────────┘
+```
+
+### 1. Upfront Deployment via Midnight Compact Studio
+Before interacting with the DApp on a live network, the smart contract (`contracts/fungible-token-v2-3.compact`) must be deployed upfront using the **midnight-compact-studio** DApp:
+1. Load `fungible-token-v2-3.compact` into **midnight-compact-studio**.
+2. Supply the constructor arguments:
+   - `salt_`: 32-byte hexadecimal salt for domain separation and replay protection.
+   - `initialOwner`: 32-byte address / public key of the contract administrator.
+   - `name_`: Token name (e.g. `"ESCALDES TOKEN V2.3"`).
+   - `symbol_`: Token symbol (e.g. `"ESCT"`).
+   - `decimals_`: Token decimal precision (e.g. `6`).
+   - `maxSupply_`: Maximum mintable cap (e.g. `2000000000000`).
+3. Deploy the contract to the desired Midnight network (**Preprod**, **Preview**, or local **Devnet**).
+
+### 2. Export & Merge Artifacts
+Once deployed, export the project bundle from **midnight-compact-studio** and merge the generated artifacts into this repository:
+- `deployment.config.json`: Contains the live `contractAddress`, `contractSalt`, `owner`, and network RPC endpoints.
+- `contract/`: Compiled contract runtime (`index.js`, `index.d.ts`).
+- `zkir/`: Compiled Zero-Knowledge Intermediate Representation bytecodes.
+- `sdk/`: TypeScript client adapter bindings.
+
+The frontend application automatically consumes `deployment.config.json` through the `ConfigContext`, enabling immediate on-chain interaction via the Lace wallet connector.
 
 ---
 
