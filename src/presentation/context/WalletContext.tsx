@@ -53,6 +53,10 @@ const STORAGE_KEYS = {
   WALLET_ID: 'midnight_connected_wallet_id',
   IDENTITY_NAME: 'midnight_active_identity_name',
   LAST_ADDRESS: 'midnight_last_address',
+  DUST_DISPLAY: 'midnight_dust_display',
+  TNIGHT_DISPLAY: 'midnight_tnight_display',
+  DUST_BALANCE: 'midnight_dust_balance',
+  TNIGHT_BALANCE: 'midnight_tnight_balance',
 } as const;
 
 const getStorageItem = (key: string): string | null => {
@@ -159,6 +163,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setDustDisplay(balances.dustDisplay);
           setTNightBalance(BigInt(balances.tNightBalance || '0'));
           setTNightDisplay(balances.tNightDisplay);
+          setStorageItem(STORAGE_KEYS.DUST_DISPLAY, balances.dustDisplay);
+          setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, balances.tNightDisplay);
+          setStorageItem(STORAGE_KEYS.DUST_BALANCE, balances.dustBalance);
+          setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, balances.tNightBalance);
         }
         console.log('[WalletContext] Auto-reconnected to Lace successfully!');
       }
@@ -212,6 +220,20 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             role: 'user',
           });
         }
+        // Restore cached balances so header is not 0 during re-connect
+        const cachedDustDisplay = getStorageItem(STORAGE_KEYS.DUST_DISPLAY);
+        const cachedTNightDisplay = getStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY);
+        const cachedDustBalance = getStorageItem(STORAGE_KEYS.DUST_BALANCE);
+        const cachedTNightBalance = getStorageItem(STORAGE_KEYS.TNIGHT_BALANCE);
+        if (cachedDustDisplay) setDustDisplay(cachedDustDisplay);
+        if (cachedTNightDisplay) setTNightDisplay(cachedTNightDisplay);
+        if (cachedDustBalance) {
+          try { setDustBalance(BigInt(cachedDustBalance)); } catch {}
+        }
+        if (cachedTNightBalance) {
+          try { setTNightBalance(BigInt(cachedTNightBalance)); } catch {}
+        }
+
         // Seamlessly re-establish API in the background
         performAutoReconnect(savedWalletId);
       } else {
@@ -227,6 +249,14 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           PRESET_IDENTITIES.find((p) => p.name === savedIdentityName) || PRESET_IDENTITIES[0];
         setActiveIdentity(matched);
         setAccountAddress(matched.addressHex);
+        setDustBalance(50_000_000_000_000_000n);
+        setDustDisplay('50.00');
+        setTNightBalance(1_000_000_000n);
+        setTNightDisplay('1,000.00');
+        setStorageItem(STORAGE_KEYS.DUST_DISPLAY, '50.00');
+        setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, '1,000.00');
+        setStorageItem(STORAGE_KEYS.DUST_BALANCE, '50000000000000000');
+        setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, '1000000000');
       } else {
         setIsConnected(false);
         setAccountAddress(null);
@@ -279,6 +309,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setDustDisplay(balances.dustDisplay);
           setTNightBalance(BigInt(balances.tNightBalance || '0'));
           setTNightDisplay(balances.tNightDisplay);
+          setStorageItem(STORAGE_KEYS.DUST_DISPLAY, balances.dustDisplay);
+          setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, balances.tNightDisplay);
+          setStorageItem(STORAGE_KEYS.DUST_BALANCE, balances.dustBalance);
+          setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, balances.tNightBalance);
         }
       } catch (err: any) {
         console.warn('[WalletContext] Failed to refresh Lace balances:', err);
@@ -298,6 +332,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setDustDisplay('50.00');
       setTNightBalance(1_000_000_000n);
       setTNightDisplay('1,000.00');
+      setStorageItem(STORAGE_KEYS.DUST_DISPLAY, '50.00');
+      setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, '1,000.00');
+      setStorageItem(STORAGE_KEYS.DUST_BALANCE, '50000000000000000');
+      setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, '1000000000');
     }
   }, [mode, activeIdentity]);
 
@@ -350,6 +388,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setDustDisplay(balances.dustDisplay);
           setTNightBalance(BigInt(balances.tNightBalance || '0'));
           setTNightDisplay(balances.tNightDisplay);
+          setStorageItem(STORAGE_KEYS.DUST_DISPLAY, balances.dustDisplay);
+          setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, balances.tNightDisplay);
+          setStorageItem(STORAGE_KEYS.DUST_BALANCE, balances.dustBalance);
+          setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, balances.tNightBalance);
         }
         setIsConnecting(false);
         setConnectingStatus(null);
@@ -461,6 +503,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 setDustDisplay(balances.dustDisplay);
                 setTNightBalance(BigInt(balances.tNightBalance || '0'));
                 setTNightDisplay(balances.tNightDisplay);
+                setStorageItem(STORAGE_KEYS.DUST_DISPLAY, balances.dustDisplay);
+                setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, balances.tNightDisplay);
+                setStorageItem(STORAGE_KEYS.DUST_BALANCE, balances.dustBalance);
+                setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, balances.tNightBalance);
               }
             }
           } catch (bgErr: any) {
@@ -500,6 +546,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setDustDisplay('50.00');
     setTNightBalance(1_000_000_000n);
     setTNightDisplay('1,000.00');
+    setStorageItem(STORAGE_KEYS.DUST_DISPLAY, '50.00');
+    setStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY, '1,000.00');
+    setStorageItem(STORAGE_KEYS.DUST_BALANCE, '50000000000000000');
+    setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, '1000000000');
     setNetworkId(MIDNIGHT_CONFIG.networkId);
   }, []);
 
@@ -572,6 +622,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     removeStorageItem(STORAGE_KEYS.WALLET_ID);
     removeStorageItem(STORAGE_KEYS.LAST_ADDRESS);
     removeStorageItem(STORAGE_KEYS.IDENTITY_NAME);
+    removeStorageItem(STORAGE_KEYS.DUST_DISPLAY);
+    removeStorageItem(STORAGE_KEYS.TNIGHT_DISPLAY);
+    removeStorageItem(STORAGE_KEYS.DUST_BALANCE);
+    removeStorageItem(STORAGE_KEYS.TNIGHT_BALANCE);
   }, []);
 
   // Window-level guard against unhandled promise rejections from Lace extension background internals

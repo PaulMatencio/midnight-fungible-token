@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from 'next';
+import { ThemeProvider } from '@/src/presentation/context/ThemeContext';
 import { ToastProvider } from '@/src/presentation/context/ToastContext';
 import { WalletProvider } from '@/src/presentation/context/WalletContext';
 import { ConfigProvider } from '@/src/presentation/context/ConfigContext';
+import { DevOverlayBackHandler } from '@/src/presentation/components/DevOverlayBackHandler';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -29,15 +31,37 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="bg-slate-950 text-slate-100 antialiased selection:bg-blue-600 selection:text-white">
-        <ConfigProvider>
-          <ToastProvider>
-            <WalletProvider>
-              {children}
-            </WalletProvider>
-          </ToastProvider>
-        </ConfigProvider>
+    <html lang="en" suppressHydrationWarning className="dark">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function() {
+              try {
+                var t = localStorage.getItem('midnight_theme');
+                var isDark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches) || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                if (isDark) {
+                  document.documentElement.classList.add('dark');
+                  document.documentElement.style.colorScheme = 'dark';
+                } else {
+                  document.documentElement.classList.remove('dark');
+                  document.documentElement.style.colorScheme = 'light';
+                }
+              } catch (e) {}
+            })()`,
+          }}
+        />
+      </head>
+      <body className="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-blue-600 selection:text-white transition-colors duration-200">
+        <ThemeProvider>
+          <ConfigProvider>
+            <ToastProvider>
+              <WalletProvider>
+                <DevOverlayBackHandler />
+                {children}
+              </WalletProvider>
+            </ToastProvider>
+          </ConfigProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

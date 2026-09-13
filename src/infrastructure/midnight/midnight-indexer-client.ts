@@ -8,7 +8,8 @@
 
 import { ContractState } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
 import { ledger, type Ledger } from '@/src/contracts/fungible-token/contract/index.js';
-import { PRESET_IDENTITIES } from '@/src/infrastructure/config/midnight-config';
+import { MIDNIGHT_CONFIG, PRESET_IDENTITIES } from '@/src/infrastructure/config/midnight-config';
+import { FungibleTokenClient } from '@/src/client/fungible-token-sdk';
 import { bech32m } from '@scure/base';
 
 export interface AccountShare {
@@ -20,6 +21,7 @@ export interface AccountShare {
   isCurrentUser?: boolean;
   isOwner?: boolean;
   label?: string;
+  mappedWalletAddress?: string; // Optional: raw connected Lace address mapped to this derived account
 }
 
 export interface IndexerTokenReport {
@@ -75,6 +77,59 @@ export function toByteArray(hex: string): Uint8Array {
 export const hexToBytes = toByteArray;
 
 /**
+ * Converts any Midnight address format into a 32-byte Uint8Array for Compact circuits.
+ * Supports:
+ * 1. Midnight Bech32m addresses (unshielded e.g. mn_addr_..., or shielded e.g. mn_shield-addr_...)
+ * 2. 32-byte hex strings (with or without 0x prefix)
+ */
+export function addressToBytes32(addr: string): Uint8Array {
+  if (!addr || typeof addr !== 'string') {
+    return new Uint8Array(32);
+  }
+  const trimmed = addr.trim();
+
+  // 1. Bech32m Midnight Address
+  if (
+    trimmed.toLowerCase().startsWith('mn_') ||
+    trimmed.toLowerCase().startsWith('midnight') ||
+    trimmed.toLowerCase().startsWith('mn1')
+  ) {
+    try {
+      const decoded = bech32m.decodeToBytes(trimmed, 200);
+      if (decoded.bytes.length === 32) {
+        return new Uint8Array(decoded.bytes);
+      }
+      if (decoded.bytes.length >= 32) {
+        return new Uint8Array(decoded.bytes.subarray(0, 32));
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  // 2. Hex string format
+  const cleanHex = trimmed.replace(/^0x/, '').trim();
+  if (/^[0-9a-fA-F]{64}$/.test(cleanHex)) {
+    const bytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16) || 0;
+    }
+    return bytes;
+  }
+
+  if (/^[0-9a-fA-F]+$/.test(cleanHex) && cleanHex.length <= 64) {
+    const padded = cleanHex.padStart(64, '0');
+    const bytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      bytes[i] = parseInt(padded.substr(i * 2, 2), 16) || 0;
+    }
+    return bytes;
+  }
+
+  return toByteArray(cleanHex);
+}
+
+/**
  * Converts a 32-byte Uint8Array into a 64-char lowercase hex string.
  */
 export function bytesToHex(bytes: Uint8Array): string {
@@ -88,13 +143,22 @@ export function bytesToHex(bytes: Uint8Array): string {
  */
 export function formatBech32Address(accountBytesOrHex: Uint8Array | string, networkId: string = 'preprod'): string {
   try {
-    const bytes = typeof accountBytesOrHex === 'string' ? hexToBytes(accountBytesOrHex) : accountBytesOrHex;
+    if (typeof accountBytesOrHex === 'string') {
+      const trimmed = accountBytesOrHex.trim();
+      if (trimmed.startsWith('mn_') || trimmed.startsWith('midnight')) {
+        return trimmed;
+      }
+    }
+    const bytes = typeof accountBytesOrHex === 'string' ? addressToBytes32(accountBytesOrHex) : accountBytesOrHex;
     const prefix = networkId === 'devnet' ? 'mn_addr_devnet' : 'mn_addr_preprod';
     return bech32m.encode(prefix, bech32m.toWords(bytes));
   } catch {
     return typeof accountBytesOrHex === 'string' ? accountBytesOrHex : bytesToHex(accountBytesOrHex);
   }
 }
+
+import { formatBalance } from '@/src/presentation/utils/format';
+export { formatBalance };
 
 /**
  * Formats a bigint token amount according to token decimals.
@@ -115,29 +179,72 @@ export function formatTokenAmount(amount: bigint, decimals: number | bigint): st
 }
 
 /**
- * Identifies known test identities or current user.
+ * Identifies known test identities or current user, mapping on-chain derived accounts
+ * back to the user's raw connected Lace wallet.
  */
 export function resolveAccountLabel(
   addressHex: string,
-  currentUserAddress?: string | null
-): { label?: string; isCurrentUser: boolean } {
+  currentUserAddress?: string | null,
+  contractSalt?: Uint8Array | string
+): { label?: string; isCurrentUser: boolean; mappedWalletAddress?: string } {
   const cleanHex = addressHex.toLowerCase().replace(/^0x/, '');
   const cleanUser = (currentUserAddress || '').toLowerCase().replace(/^0x/, '');
 
-  const isCurrentUser =
-    Boolean(cleanUser) &&
-    (cleanUser === cleanHex ||
-      (cleanUser.startsWith('mn_') && formatBech32Address(cleanHex).toLowerCase() === cleanUser));
+  let isCurrentUser = false;
 
-  const presetMatch = PRESET_IDENTITIES.find((p) => p.addressHex.toLowerCase() === cleanHex);
+  if (cleanUser) {
+    // 1. Direct hex match
+    if (cleanUser === cleanHex) {
+      isCurrentUser = true;
+    }
+    // 2. Bech32m direct match
+    else if (cleanUser.startsWith('mn_') && formatBech32Address(cleanHex).toLowerCase() === cleanUser) {
+      isCurrentUser = true;
+    }
+    // 3. Derived account match (the on-chain holder account was derived from the raw Lace wallet)
+    else {
+      try {
+        const userBytes = addressToBytes32(currentUserAddress!);
+        const rawUserHex = bytesToHex(userBytes).toLowerCase();
+        if (cleanHex === rawUserHex) {
+          isCurrentUser = true;
+        } else {
+          // Derive on-chain spendable account identity
+          const salt = contractSalt ?? MIDNIGHT_CONFIG.contractSalt ?? new Uint8Array(32).fill(42);
+          const derived = FungibleTokenClient.deriveAccount(userBytes, salt);
+          const derivedHex = bytesToHex(derived).toLowerCase();
+          if (cleanHex === derivedHex) {
+            isCurrentUser = true;
+          }
+        }
+      } catch {
+        // Safe fallback
+      }
+    }
+  }
+
+  // Check preset identities (e.g. Alice, Bob, Charlie)
+  const presetMatch = PRESET_IDENTITIES.find((p) => {
+    const pClean = p.addressHex.toLowerCase().replace(/^0x/, '');
+    if (pClean === cleanHex) return true;
+    try {
+      const salt = contractSalt ?? MIDNIGHT_CONFIG.contractSalt ?? new Uint8Array(32).fill(42);
+      const derivedPreset = bytesToHex(FungibleTokenClient.deriveAccount(addressToBytes32(pClean), salt)).toLowerCase();
+      return derivedPreset === cleanHex;
+    } catch {
+      return false;
+    }
+  });
+
   const formattedPresetName = presetMatch
     ? presetMatch.name.charAt(0).toUpperCase() + presetMatch.name.slice(1)
     : undefined;
 
   if (isCurrentUser) {
     return {
-      label: formattedPresetName ? `${formattedPresetName} (You)` : 'You (Connected)',
+      label: formattedPresetName ? `${formattedPresetName} (You)` : 'You (Lace Wallet)',
       isCurrentUser: true,
+      mappedWalletAddress: currentUserAddress || undefined,
     };
   }
 
@@ -156,6 +263,7 @@ export function calculateAccountSharesFromLedger(
   options?: {
     contractAddress?: string;
     currentUserAddress?: string | null;
+    contractSalt?: Uint8Array | string;
     networkId?: string;
     blockHeight?: number;
     txHash?: string;
@@ -172,7 +280,11 @@ export function calculateAccountSharesFromLedger(
     for (const [accountBytes, balance] of ledgerState._balances) {
       const addressHex = bytesToHex(accountBytes);
       const addressBech32 = formatBech32Address(accountBytes, options?.networkId);
-      const { label, isCurrentUser } = resolveAccountLabel(addressHex, options?.currentUserAddress);
+      const { label, isCurrentUser, mappedWalletAddress } = resolveAccountLabel(
+        addressHex,
+        options?.currentUserAddress,
+        options?.contractSalt
+      );
       const isOwner = Boolean(ownerHex && addressHex.toLowerCase() === ownerHex.toLowerCase());
 
       const sharePercentage =
@@ -187,6 +299,7 @@ export function calculateAccountSharesFromLedger(
         isCurrentUser,
         isOwner,
         label: isOwner ? (label ? `${label} (Owner)` : 'Contract Owner') : label,
+        mappedWalletAddress,
       });
     }
   }
@@ -231,6 +344,7 @@ export async function queryIndexerContractState(
   indexerUrl: string,
   options?: {
     currentUserAddress?: string | null;
+    contractSalt?: Uint8Array | string;
     networkId?: string;
   }
 ): Promise<IndexerTokenReport> {
@@ -284,6 +398,7 @@ export async function queryIndexerContractState(
   return calculateAccountSharesFromLedger(decodedLedger, {
     contractAddress: cleanAddr,
     currentUserAddress: options?.currentUserAddress,
+    contractSalt: options?.contractSalt,
     networkId: options?.networkId || 'preprod',
     blockHeight: contractAction.transaction?.block?.height,
     txHash: contractAction.transaction?.hash,

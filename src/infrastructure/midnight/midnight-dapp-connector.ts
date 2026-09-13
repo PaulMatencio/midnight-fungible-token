@@ -421,8 +421,70 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
     }
   };
 
+  // Helper to extract a bigint from varied shapes (number, string, or { amount / balance / value / dust / unshielded })
+  const extractBigInt = (val: any): bigint => {
+    if (val === null || val === undefined) return 0n;
+    if (typeof val === 'bigint') return val;
+    if (typeof val === 'number') return BigInt(Math.floor(val));
+    if (typeof val === 'string') {
+      try {
+        const clean = val.trim().replace(/,/g, '');
+        return BigInt(clean);
+      } catch {
+        return 0n;
+      }
+    }
+    if (typeof val === 'object') {
+      if (val.balance !== undefined && val.balance !== null) return extractBigInt(val.balance);
+      if (val.amount !== undefined && val.amount !== null) return extractBigInt(val.amount);
+      if (val.value !== undefined && val.value !== null) return extractBigInt(val.value);
+      if (val.dust !== undefined && val.dust !== null) return extractBigInt(val.dust);
+      if (val.unshielded !== undefined && val.unshielded !== null) return extractBigInt(val.unshielded);
+      if (val.currentBalance !== undefined && val.currentBalance !== null) return extractBigInt(val.currentBalance);
+      if (val.available !== undefined && val.available !== null) return extractBigInt(val.available);
+      if (val.capacity !== undefined && val.capacity !== null) return extractBigInt(val.capacity);
+    }
+    return 0n;
+  };
+
+  const sumValues = (raw: any): bigint => {
+    if (!raw) return 0n;
+    const direct = extractBigInt(raw);
+    if (direct > 0n) return direct;
+
+    let total = 0n;
+    if (typeof raw.entries === 'function') {
+      try {
+        for (const [, val] of raw.entries()) {
+          total += extractBigInt(val);
+        }
+        if (total > 0n) return total;
+      } catch {}
+    }
+    if (typeof raw.values === 'function') {
+      try {
+        for (const val of raw.values()) {
+          total += extractBigInt(val);
+        }
+        if (total > 0n) return total;
+      } catch {}
+    }
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        total += extractBigInt(item);
+      }
+      if (total > 0n) return total;
+    }
+    if (typeof raw === 'object') {
+      for (const val of Object.values(raw)) {
+        total += extractBigInt(val);
+      }
+    }
+    return total;
+  };
+
   // Query canonical DApp Connector balance methods with 6000ms timeout
-  const [unshieldedRaw, dustRaw, shieldedRaw] = await Promise.all([
+  let [unshieldedRaw, dustRaw, shieldedRaw] = await Promise.all([
     typeof api.getUnshieldedBalances === 'function'
       ? safeQuery(() => api.getUnshieldedBalances(), 6000, 'getUnshieldedBalances')
       : typeof api.getUnshieldedBalance === 'function'
@@ -440,6 +502,35 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
       : Promise.resolve(null),
   ]);
 
+  // Fallback 1: Query api.state() if direct queries returned null
+  if ((unshieldedRaw === null || dustRaw === null) && typeof api.state === 'function') {
+    try {
+      const stateRaw: any = await safeQuery(() => api.state(), 4000, 'state');
+      if (stateRaw) {
+        if (unshieldedRaw === null) {
+          unshieldedRaw = stateRaw.unshieldedBalances || stateRaw.balances || stateRaw.unshielded || null;
+        }
+        if (dustRaw === null) {
+          dustRaw = stateRaw.dust || stateRaw.dustBalance || stateRaw.registeredDust || null;
+        }
+        if (shieldedRaw === null) {
+          shieldedRaw = stateRaw.shieldedBalances || stateRaw.shielded || null;
+        }
+      }
+    } catch {}
+  }
+
+  // Fallback 2: Alternate method names on ConnectedAPI
+  if (unshieldedRaw === null && typeof api.getBalances === 'function') {
+    unshieldedRaw = await safeQuery(() => api.getBalances(), 4000, 'getBalances');
+  }
+  if (dustRaw === null && typeof api.getDust === 'function') {
+    dustRaw = await safeQuery(() => api.getDust(), 4000, 'getDust');
+  }
+  if (dustRaw === null && api.dustBalance !== undefined && api.dustBalance !== null) {
+    dustRaw = api.dustBalance;
+  }
+
   console.log('[Midnight Lace Connector] Queried balances from Lace API:', {
     unshielded: unshieldedRaw,
     dust: dustRaw,
@@ -447,72 +538,27 @@ export async function fetchExtensionWalletBalances(api: any): Promise<ExtensionW
     errorsCount: queryErrors.length,
   });
 
-  // 1. Process unshielded tNIGHT
-  if (unshieldedRaw !== null && unshieldedRaw !== undefined) {
-    if (typeof unshieldedRaw === 'bigint') {
-      tNightBigInt = unshieldedRaw;
-    } else if (typeof unshieldedRaw === 'number' || typeof unshieldedRaw === 'string') {
-      try {
-        tNightBigInt = BigInt(unshieldedRaw);
-      } catch {}
-    } else if (typeof unshieldedRaw === 'object') {
-      const entries = unshieldedRaw instanceof Map ? Array.from(unshieldedRaw.entries()) : Object.entries(unshieldedRaw);
-      for (const [, val] of entries) {
-        if (typeof val === 'bigint') {
-          tNightBigInt += val;
-        } else if (typeof val === 'number' || typeof val === 'string') {
-          try {
-            tNightBigInt += BigInt(val);
-          } catch {}
-        }
-      }
-    }
-  }
+  // Process balances using robust recursive extractor
+  tNightBigInt = sumValues(unshieldedRaw);
+  dustBigInt = sumValues(dustRaw);
+  shieldedBigInt = sumValues(shieldedRaw);
 
-  // 2. Process DUST
-  if (dustRaw !== null && dustRaw !== undefined) {
-    if (typeof dustRaw === 'bigint') {
-      dustBigInt = dustRaw;
-    } else if (typeof dustRaw === 'number' || typeof dustRaw === 'string') {
-      try {
-        dustBigInt = BigInt(dustRaw);
-      } catch {}
-    } else if (typeof dustRaw === 'object') {
-      const obj = dustRaw as any;
-      if (obj.balance !== undefined && obj.balance !== null) {
-        dustBigInt = typeof obj.balance === 'bigint' ? obj.balance : BigInt(obj.balance.toString());
-      } else if (obj.dust !== undefined && obj.dust !== null) {
-        dustBigInt = typeof obj.dust === 'bigint' ? obj.dust : BigInt(obj.dust.toString());
-      }
-    }
-  }
-
-  // 3. Process Shielded balances
-  if (shieldedRaw !== null && shieldedRaw !== undefined) {
-    if (typeof shieldedRaw === 'bigint') {
-      shieldedBigInt = shieldedRaw;
-    } else if (typeof shieldedRaw === 'object') {
-      const entries = shieldedRaw instanceof Map ? Array.from(shieldedRaw.entries()) : Object.entries(shieldedRaw);
-      for (const [, val] of entries) {
-        if (typeof val === 'bigint') {
-          shieldedBigInt += val;
-        } else if (typeof val === 'number' || typeof val === 'string') {
-          try {
-            shieldedBigInt += BigInt(val);
-          } catch {}
-        }
-      }
-    }
-  }
-
-  const formattedTNight = (Number(tNightBigInt) / 1_000_000).toLocaleString(undefined, {
-    minimumFractionDigits: 0,
+  const tNightUnits = Number(tNightBigInt) / 1_000_000;
+  const tNightDecimals = tNightUnits % 1 === 0 ? 0 : 2;
+  const formattedTNight = tNightUnits.toLocaleString(undefined, {
+    minimumFractionDigits: tNightDecimals,
     maximumFractionDigits: 6,
   });
 
-  const dustUnits = dustBigInt >= 1_000_000_000n ? Number(dustBigInt) / 1e15 : Number(dustBigInt);
+  let dustUnits = Number(dustBigInt);
+  if (dustBigInt >= 1_000_000_000_000n) {
+    dustUnits = Number(dustBigInt) / 1e15;
+  } else if (dustBigInt >= 1_000_000n && dustBigInt < 1_000_000_000_000n) {
+    dustUnits = Number(dustBigInt) / 1e6;
+  }
+  const dustDecimals = dustUnits % 1 === 0 ? 0 : (dustUnits < 0.01 ? 4 : 2);
   const formattedDust = dustUnits.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
+    minimumFractionDigits: dustDecimals,
     maximumFractionDigits: 4,
   });
 
@@ -628,47 +674,203 @@ export function createLaceWalletProvider(api: any) {
       return '01'.repeat(32);
     },
     balanceTx: async (tx: any, ttl?: Date) => {
-      try {
-        console.log('[LaceWalletProvider] balanceTx started');
-        // 1. Prepare serialized hex string of the transaction if tx is a Transaction object
-        const isSerializable = tx && typeof tx.serialize === 'function';
-        const txHex: string | null = isSerializable
-          ? toHex(tx.serialize())
-          : typeof tx === 'string'
-          ? tx
-          : tx instanceof Uint8Array
-          ? toHex(tx)
-          : null;
+      console.log('[LaceWalletProvider] balanceTx started');
 
-        // 2. Call Lace balance method
-        // Lace DApp connector expects serialized hex string for balanceUnsealedTransaction
-        let response: any;
-        if (typeof api?.balanceUnsealedTransaction === 'function') {
-          console.log('[LaceWalletProvider] Invoking api.balanceUnsealedTransaction...');
-          response = await api.balanceUnsealedTransaction(txHex ?? tx, {});
-        } else if (typeof api?.balanceTransaction === 'function') {
-          console.log('[LaceWalletProvider] Invoking api.balanceTransaction...');
-          response = await api.balanceTransaction(txHex ?? tx, ttl);
-        } else if (typeof api?.balanceTx === 'function') {
-          console.log('[LaceWalletProvider] Invoking api.balanceTx...');
-          response = await api.balanceTx(txHex ?? tx, ttl);
+      // 1. Prepare serialized hex variants
+      const isSerializable = tx && typeof tx.serialize === 'function';
+      const cleanHex: string | null = isSerializable
+        ? toHex(tx.serialize())
+        : typeof tx === 'string'
+        ? tx.replace(/^0x/, '')
+        : tx instanceof Uint8Array
+        ? toHex(tx)
+        : null;
+      const withPrefixHex = cleanHex ? `0x${cleanHex}` : null;
+
+      // Helper to determine if an error is a terminal user action or wallet state
+      // (in which case retrying alternate payloads is pointless)
+      const isTerminalError = (err: any): boolean => {
+        if (!err) return false;
+        if (isWalletLockedError(err) || isChannelShutdownError(err)) return true;
+        const errCode = err?.code || (err as any)?.type;
+        const errReason = err?.reason || err?.info || err?.description || '';
+        const errMsg = err?.message || '';
+        const combined = `${err?.name || ''} ${errMsg} ${errReason} ${String(errCode || '')}`.toLowerCase();
+        return (
+          err?.name === 'PermissionRejected' ||
+          errCode === 'Rejected' ||
+          errCode === 'PermissionRejected' ||
+          combined.includes('reject') ||
+          combined.includes('denied') ||
+          combined.includes('cancel') ||
+          combined.includes('decline') ||
+          combined.includes('locked') ||
+          combined.includes('insufficient') ||
+          combined.includes('not enough')
+        );
+      };
+
+      // Helper to construct a descriptive error message from any Lace error object
+      const formatLaceError = (err: any): Error => {
+        const errCode = err?.code || (err as any)?.type;
+        const errReason = err?.reason || err?.info || err?.description || err?.data;
+        const errMsg = err?.message && err.message !== 'Error' ? err.message : null;
+        const combined = `${err?.name || ''} ${errMsg || ''} ${errReason || ''} ${String(errCode || '')}`.toLowerCase();
+
+        let friendlyMsg: string;
+        if (
+          err?.name === 'PermissionRejected' ||
+          errCode === 'Rejected' ||
+          errCode === 'PermissionRejected' ||
+          combined.includes('reject') ||
+          combined.includes('denied') ||
+          combined.includes('cancel') ||
+          combined.includes('decline')
+        ) {
+          friendlyMsg = errReason || 'Transaction balancing was cancelled or declined in Lace wallet.';
+        } else if (isWalletLockedError(err) || combined.includes('wallet is locked') || combined.includes('unlock')) {
+          friendlyMsg = 'Your Lace wallet is locked. Please unlock the Lace extension in your browser toolbar and try again.';
+        } else if (isChannelShutdownError(err)) {
+          friendlyMsg = 'Lace extension background channel was idle/shutdown. Please refresh your browser page and retry.';
+        } else if (combined.includes('insufficient') || combined.includes('not enough') || combined.includes('dust') || combined.includes('fee')) {
+          friendlyMsg = errReason || 'Insufficient DUST or tNIGHT balance in Lace wallet to pay transaction fees. Please request faucet tokens or delegate NIGHT.';
+        } else if (errReason && typeof errReason === 'string' && errReason.trim()) {
+          friendlyMsg = errReason.trim();
+        } else if (errMsg && typeof errMsg === 'string' && errMsg.trim() && errMsg !== 'Error') {
+          friendlyMsg = errMsg.trim();
         } else {
-          console.warn('[LaceWalletProvider] No balance method available on connector');
-          return tx;
+          friendlyMsg = 'Lace failed to balance the transaction. Please verify your Lace wallet is unlocked, has sufficient DUST for fees, and that you confirmed the popup in Lace.';
         }
 
-        // 3. Extract balanced hex string from response
-        let balancedHex: string | null = null;
-        if (typeof response === 'string') {
-          balancedHex = response;
-        } else if (response && typeof response.tx === 'string') {
-          balancedHex = response.tx;
-        } else if (response && typeof response.balancedTx === 'string') {
-          balancedHex = response.balancedTx;
+        if (errCode && !friendlyMsg.includes(String(errCode))) {
+          friendlyMsg = `${friendlyMsg} [Code: ${errCode}]`;
+        }
+        if (errReason && typeof errReason === 'string' && !friendlyMsg.includes(errReason)) {
+          friendlyMsg = `${friendlyMsg} [Reason: ${errReason}]`;
         }
 
-        // If response is a hex string (from real Lace), deserialize into FinalizedTransaction
-        if (balancedHex) {
+        console.error('[LaceWalletProvider] Formatted balanceTx error:', {
+          friendlyMsg,
+          rawError: err,
+          code: errCode,
+          reason: errReason,
+          name: err?.name,
+          stack: err?.stack,
+        });
+
+        const wrapped = new Error(friendlyMsg, { cause: err });
+        if (errCode) (wrapped as any).code = errCode;
+        if (errReason) (wrapped as any).reason = errReason;
+        return wrapped;
+      };
+
+      let lastError: any = null;
+      let response: any = null;
+      let balancingSucceeded = false;
+
+      // 2. Attempt balanceUnsealedTransaction (Canonical Midnight DApp Connector method)
+      if (typeof api?.balanceUnsealedTransaction === 'function') {
+        const attempts: Array<{ label: string; fn: () => Promise<any> }> = [];
+        if (cleanHex) {
+          attempts.push({
+            label: 'cleanHex with {}',
+            fn: () => api.balanceUnsealedTransaction(cleanHex, {}),
+          });
+          attempts.push({
+            label: 'cleanHex without options',
+            fn: () => api.balanceUnsealedTransaction(cleanHex),
+          });
+        }
+        if (withPrefixHex) {
+          attempts.push({
+            label: 'withPrefixHex with {}',
+            fn: () => api.balanceUnsealedTransaction(withPrefixHex, {}),
+          });
+          attempts.push({
+            label: 'withPrefixHex without options',
+            fn: () => api.balanceUnsealedTransaction(withPrefixHex),
+          });
+        }
+        // Fallback for mocks or direct tx objects
+        attempts.push({
+          label: 'raw tx object',
+          fn: () => api.balanceUnsealedTransaction(tx, {}),
+        });
+
+        for (const attempt of attempts) {
+          try {
+            console.log(`[LaceWalletProvider] Trying api.balanceUnsealedTransaction (${attempt.label})...`);
+            response = await attempt.fn();
+            balancingSucceeded = true;
+            console.log(`[LaceWalletProvider] balanceUnsealedTransaction succeeded (${attempt.label})`);
+            break;
+          } catch (err: any) {
+            lastError = err;
+            console.warn(`[LaceWalletProvider] balanceUnsealedTransaction attempt (${attempt.label}) failed:`, err?.reason || err?.message || err);
+            // If user explicitly cancelled or wallet is locked/exhausted, do not retry other hex formats
+            if (isTerminalError(err)) {
+              throw formatLaceError(err);
+            }
+          }
+        }
+      }
+
+      // 3. Fallback to balanceTransaction or balanceTx if balanceUnsealedTransaction was not present or failed
+      if (!balancingSucceeded) {
+        const altFn =
+          typeof api?.balanceTransaction === 'function'
+            ? api.balanceTransaction.bind(api)
+            : typeof api?.balanceTx === 'function'
+            ? api.balanceTx.bind(api)
+            : null;
+        const altMethodName = typeof api?.balanceTransaction === 'function' ? 'balanceTransaction' : 'balanceTx';
+
+        if (altFn) {
+          const altAttempts: Array<{ label: string; fn: () => Promise<any> }> = [
+            { label: 'raw tx with ttl', fn: () => altFn(tx, ttl) },
+          ];
+          if (cleanHex) {
+            altAttempts.push({ label: 'cleanHex with ttl', fn: () => altFn(cleanHex, ttl) });
+          }
+          for (const attempt of altAttempts) {
+            try {
+              console.log(`[LaceWalletProvider] Trying api.${altMethodName} (${attempt.label})...`);
+              response = await attempt.fn();
+              balancingSucceeded = true;
+              console.log(`[LaceWalletProvider] ${altMethodName} succeeded (${attempt.label})`);
+              break;
+            } catch (err: any) {
+              lastError = err;
+              console.warn(`[LaceWalletProvider] ${altMethodName} attempt (${attempt.label}) failed:`, err?.reason || err?.message || err);
+              if (isTerminalError(err)) {
+                throw formatLaceError(err);
+              }
+            }
+          }
+        }
+      }
+
+      if (!balancingSucceeded) {
+        if (lastError) {
+          throw formatLaceError(lastError);
+        }
+        console.warn('[LaceWalletProvider] No balance method available on connector, returning unbalanced tx');
+        return tx;
+      }
+
+      // 4. Extract balanced hex string from response
+      let balancedHex: string | null = null;
+      if (typeof response === 'string') {
+        balancedHex = response;
+      } else if (response && typeof response.tx === 'string') {
+        balancedHex = response.tx;
+      } else if (response && typeof response.balancedTx === 'string') {
+        balancedHex = response.balancedTx;
+      }
+
+      // If response is a hex string (from real Lace), deserialize into FinalizedTransaction
+      if (balancedHex) {
+        try {
           console.log('[LaceWalletProvider] Deserializing balanced transaction...');
           return Transaction.deserialize(
             'signature',
@@ -676,14 +878,16 @@ export function createLaceWalletProvider(api: any) {
             'binding',
             fromHex(balancedHex.replace(/^0x/, ''))
           );
+        } catch (deserErr: any) {
+          console.error('[LaceWalletProvider] Failed to deserialize balanced transaction hex:', deserErr);
+          throw new Error(`Failed to deserialize balanced transaction from Lace: ${deserErr?.message || deserErr}`, {
+            cause: deserErr,
+          });
         }
-
-        // If response is already an object (e.g. from mock in unit tests), return directly
-        return response;
-      } catch (err: any) {
-        console.error('[LaceWalletProvider] Error in balanceTx:', err);
-        throw err;
       }
+
+      // If response is already an object (e.g. from mock in unit tests), return directly
+      return response;
     },
   };
 }

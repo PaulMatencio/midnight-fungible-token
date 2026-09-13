@@ -20,11 +20,16 @@ import {
   Flame,
   Radio,
   Coins,
+  LayoutDashboard,
+  Sun,
+  Moon,
+  LogOut,
 } from 'lucide-react';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useConfig } from '@/src/presentation/context/ConfigContext';
+import { useTheme } from '@/src/presentation/context/ThemeContext';
 
-export type ActiveNavTab = 'actions' | 'ledger' | 'activity' | 'diagnostics';
+export type ActiveNavTab = 'dashboard' | 'actions' | 'ledger' | 'activity' | 'diagnostics';
 
 interface SidebarProps {
   activeTab: ActiveNavTab;
@@ -55,9 +60,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     dustDisplay,
     activeIdentity,
     isWalletLocked,
+    disconnectWallet,
   } = useWallet();
 
   const { config, preset, diagnostics, getExplorerNetworkUrl } = useConfig();
+  const { resolvedTheme, toggleTheme } = useTheme();
   const [copiedAddr, setCopiedAddr] = React.useState(false);
 
   const copyAddress = async () => {
@@ -71,11 +78,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItems = [
     {
+      id: 'dashboard' as ActiveNavTab,
+      label: 'Executive Dashboard',
+      subtext: 'KPIs, Supply & Charts',
+      icon: LayoutDashboard,
+      color: 'text-cyan-500 dark:text-cyan-400',
+      bg: 'group-hover:bg-cyan-500/10',
+    },
+    {
       id: 'actions' as ActiveNavTab,
       label: 'Circuits & Actions',
       subtext: 'Mint, Transfer, Burn',
       icon: Zap,
-      color: 'text-amber-400',
+      color: 'text-amber-500 dark:text-amber-400',
       bg: 'group-hover:bg-amber-500/10',
     },
     {
@@ -83,7 +98,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Ledger & Shares',
       subtext: 'Holders & Account Shares',
       icon: Database,
-      color: 'text-blue-400',
+      color: 'text-blue-500 dark:text-blue-400',
       bg: 'group-hover:bg-blue-500/10',
     },
     {
@@ -91,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Audit & Activity Log',
       subtext: 'Transaction History',
       icon: History,
-      color: 'text-purple-400',
+      color: 'text-purple-500 dark:text-purple-400',
       bg: 'group-hover:bg-purple-500/10',
     },
     {
@@ -99,32 +114,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Infrastructure & Nodes',
       subtext: 'Probes & Indexer Health',
       icon: Server,
-      color: 'text-cyan-400',
+      color: 'text-cyan-500 dark:text-cyan-400',
       bg: 'group-hover:bg-cyan-500/10',
     },
   ];
 
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-slate-950 border-r border-slate-800/80 text-slate-200">
+    <div className="flex flex-col h-full bg-white border-r border-slate-200 text-slate-800 dark:bg-slate-950 dark:border-slate-800/80 dark:text-slate-200 transition-colors duration-200">
       {/* Brand Header */}
-      <div className="p-4 sm:p-5 flex items-center justify-between border-b border-slate-800/70">
+      <div className="p-4 sm:p-5 flex items-center justify-between border-b border-slate-200 dark:border-slate-800/70">
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 flex-shrink-0">
-            <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-cyan-400" />
+            <div className="w-full h-full bg-slate-50 dark:bg-slate-950 rounded-[10px] flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-cyan-500 dark:text-cyan-400" />
             </div>
           </div>
           {(!isCollapsedDesktop || isOpenMobile) && (
             <div className="overflow-hidden">
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-sm text-white tracking-tight truncate">
+                <span className="font-bold text-sm text-slate-900 dark:text-white tracking-tight truncate">
                   Midnight Token
                 </span>
-                <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 uppercase">
+                <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-blue-500/15 text-blue-600 dark:bg-blue-500/20 dark:text-blue-300 uppercase">
                   DApp
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 truncate">Compact Fungible Token</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Compact Fungible Token</p>
             </div>
           )}
         </div>
@@ -133,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           onClick={onCloseMobile}
-          className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          className="md:hidden p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -142,7 +157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           onClick={onToggleCollapseDesktop}
-          className="hidden md:flex p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          className="hidden md:flex p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
           title={isCollapsedDesktop ? 'Expand Sidebar' : 'Collapse Sidebar'}
         >
           {isCollapsedDesktop ? (
@@ -156,7 +171,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Navigation Links */}
       <div className="flex-1 py-4 px-3 space-y-1.5 overflow-y-auto custom-scrollbar">
         {(!isCollapsedDesktop || isOpenMobile) && (
-          <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
             Navigation
           </div>
         )}
@@ -175,13 +190,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               title={item.label}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all group ${
                 isActive
-                  ? 'bg-blue-600/15 border border-blue-500/30 text-white shadow-sm shadow-blue-500/10'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
+                  ? 'bg-blue-600/10 border border-blue-500/30 text-blue-700 dark:bg-blue-600/15 dark:border-blue-500/30 dark:text-white shadow-sm shadow-blue-500/10'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-transparent'
               }`}
             >
               <div
                 className={`p-2 rounded-lg transition-colors ${
-                  isActive ? 'bg-blue-500/20 text-blue-400' : `${item.color} bg-slate-900 ${item.bg}`
+                  isActive ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' : `${item.color} bg-slate-100 dark:bg-slate-900 ${item.bg}`
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -189,7 +204,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {(!isCollapsedDesktop || isOpenMobile) && (
                 <div className="overflow-hidden flex-1">
-                  <div className="font-semibold text-xs text-white group-hover:text-cyan-300 transition-colors truncate">
+                  <div className="font-semibold text-xs text-slate-900 dark:text-white group-hover:text-cyan-600 dark:group-hover:text-cyan-300 transition-colors truncate">
                     {item.label}
                   </div>
                   <div className="text-[10px] text-slate-500 truncate">{item.subtext}</div>
@@ -207,24 +222,50 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onCloseMobile();
           }}
           title="Infrastructure Settings"
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-transparent"
         >
-          <div className="p-2 rounded-lg bg-slate-900 text-cyan-400 group-hover:bg-cyan-500/10">
+          <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900 text-cyan-600 dark:text-cyan-400 group-hover:bg-cyan-500/10">
             <Settings className="w-4 h-4" />
           </div>
           {(!isCollapsedDesktop || isOpenMobile) && (
             <div className="overflow-hidden flex-1">
-              <div className="font-semibold text-xs text-white truncate">Settings & Config</div>
+              <div className="font-semibold text-xs text-slate-900 dark:text-white truncate">Settings & Config</div>
               <div className="text-[10px] text-slate-500 truncate">Endpoints & Live Probes</div>
+            </div>
+          )}
+        </button>
+
+        {/* Theme Toggle Button in nav */}
+        <button
+          type="button"
+          onClick={toggleTheme}
+          title={`Switch to ${resolvedTheme === 'dark' ? 'Light' : 'Dark'} mode`}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-transparent"
+        >
+          <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900 text-amber-500 dark:text-amber-400">
+            {resolvedTheme === 'dark' ? (
+              <Sun className="w-4 h-4 text-amber-500 dark:text-amber-400" />
+            ) : (
+              <Moon className="w-4 h-4 text-indigo-600" />
+            )}
+          </div>
+          {(!isCollapsedDesktop || isOpenMobile) && (
+            <div className="overflow-hidden flex-1">
+              <div className="font-semibold text-xs text-slate-900 dark:text-white truncate">
+                {resolvedTheme === 'dark' ? 'Light Theme' : 'Dark Theme'}
+              </div>
+              <div className="text-[10px] text-slate-500 truncate">
+                Switch to {resolvedTheme === 'dark' ? 'light' : 'dark'} mode
+              </div>
             </div>
           )}
         </button>
       </div>
 
       {/* Connected Wallet & Status Card */}
-      <div className="p-3 border-t border-slate-800/80 space-y-3">
+      <div className="p-3 border-t border-slate-200 dark:border-slate-800/80 space-y-3">
         {(!isCollapsedDesktop || isOpenMobile) ? (
-          <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2.5">
+          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 dark:bg-slate-900/80 dark:border-slate-800 space-y-2.5">
             {/* Identity line */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
@@ -233,32 +274,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     isConnected
                       ? isWalletLocked
                         ? 'bg-amber-400 animate-pulse'
-                        : 'bg-emerald-400 shadow-sm shadow-emerald-400/50'
-                      : 'bg-slate-500'
+                        : 'bg-emerald-500 dark:bg-emerald-400 shadow-sm shadow-emerald-400/50'
+                      : 'bg-slate-400 dark:bg-slate-500'
                   }`}
                 />
-                <span className="text-[11px] font-bold text-white uppercase tracking-wider">
+                <span className="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-wider">
                   {mode === 'lace' ? 'Lace Wallet' : 'Test Mode'}
                 </span>
               </div>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase">
-                {preset}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 uppercase">
+                  {preset}
+                </span>
+                {isConnected && (
+                  <button
+                    type="button"
+                    onClick={disconnectWallet}
+                    className="p-1 rounded text-rose-500 hover:text-rose-700 hover:bg-rose-500/10 transition-colors"
+                    title="Disconnect Wallet"
+                    aria-label="Disconnect Wallet"
+                  >
+                    <LogOut className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Address */}
             {accountAddress ? (
-              <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-950/60 px-2.5 py-1.5 rounded-lg">
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-600 dark:text-slate-400 bg-white border border-slate-200 dark:bg-slate-950/60 dark:border-transparent px-2.5 py-1.5 rounded-lg">
                 <span className="truncate max-w-[140px]" title={accountAddress}>
                   {accountAddress.slice(0, 8)}...{accountAddress.slice(-6)}
                 </span>
                 <button
                   type="button"
                   onClick={copyAddress}
-                  className="text-slate-400 hover:text-white"
+                  className="text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
                   title="Copy Address"
                 >
-                  {copiedAddr ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  {copiedAddr ? <Check className="w-3 h-3 text-emerald-500 dark:text-emerald-400" /> : <Copy className="w-3 h-3" />}
                 </button>
               </div>
             ) : (
@@ -274,17 +328,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Balance Gauges */}
             {isConnected && (
               <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono pt-1">
-                <div className="bg-slate-950/40 p-1.5 rounded-lg border border-slate-800/60">
+                <div className="bg-white border border-slate-200 dark:bg-slate-950/40 p-1.5 rounded-lg dark:border-slate-800/60">
                   <div className="text-slate-500 text-[9px] flex items-center gap-1">
-                    <Coins className="w-2.5 h-2.5 text-blue-400" /> tNIGHT
+                    <Coins className="w-2.5 h-2.5 text-blue-500 dark:text-blue-400" /> tNIGHT
                   </div>
-                  <div className="font-bold text-slate-200 truncate">{tNightDisplay}</div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 truncate">{tNightDisplay}</div>
                 </div>
-                <div className="bg-slate-950/40 p-1.5 rounded-lg border border-slate-800/60">
+                <div className="bg-white border border-slate-200 dark:bg-slate-950/40 p-1.5 rounded-lg dark:border-slate-800/60">
                   <div className="text-slate-500 text-[9px] flex items-center gap-1">
-                    <Flame className="w-2.5 h-2.5 text-amber-400" /> DUST
+                    <Flame className="w-2.5 h-2.5 text-amber-500 dark:text-amber-400" /> DUST
                   </div>
-                  <div className="font-bold text-slate-200 truncate">{dustDisplay}</div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 truncate">{dustDisplay}</div>
                 </div>
               </div>
             )}
@@ -297,8 +351,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={onOpenWalletModal}
               className={`p-2 rounded-xl border transition-colors ${
                 isConnected
-                  ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  ? 'bg-blue-600/15 border-blue-500/40 text-blue-600 dark:text-blue-300'
+                  : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-400 dark:hover:text-white'
               }`}
               title={isConnected ? `Connected: ${accountAddress}` : 'Connect Wallet'}
             >
@@ -309,16 +363,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Live Infrastructure Dot Pill */}
         {(!isCollapsedDesktop || isOpenMobile) && (
-          <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 pt-1">
+          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-1 pt-1">
             <div className="flex items-center gap-1.5">
-              <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+              <Radio className="w-3 h-3 text-emerald-500 dark:text-emerald-400 animate-pulse" />
               <span>Nodes Live</span>
             </div>
             <a
               href={getExplorerNetworkUrl()}
               target="_blank"
               rel="noreferrer"
-              className="text-slate-400 hover:text-cyan-400 transition-colors flex items-center gap-1 text-[10px]"
+              className="text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-400 transition-colors flex items-center gap-1 text-[10px]"
             >
               <span>Explorer</span>
               <ExternalLink className="w-2.5 h-2.5" />
@@ -334,7 +388,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Mobile Slide-over Drawer Backdrop */}
       {isOpenMobile && (
         <div
-          className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm md:hidden transition-opacity"
+          className="fixed inset-0 z-40 bg-slate-900/50 dark:bg-slate-950/80 backdrop-blur-sm md:hidden transition-opacity"
           onClick={onCloseMobile}
         />
       )}

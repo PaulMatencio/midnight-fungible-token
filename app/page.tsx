@@ -7,7 +7,8 @@ import { MobileBottomNav } from '@/src/presentation/components/MobileBottomNav';
 import { InfrastructureSettingsModal } from '@/src/presentation/components/InfrastructureSettingsModal';
 import { WalletModal } from '@/src/presentation/components/WalletModal';
 import { ContractOverview } from '@/src/presentation/components/ContractOverview';
-import { TokenActions } from '@/src/presentation/components/TokenActions';
+import { TokenActions, TabType as ActionTabType } from '@/src/presentation/components/TokenActions';
+import { DashboardView } from '@/src/presentation/components/DashboardView';
 import { QueryViewer } from '@/src/presentation/components/QueryViewer';
 import { AccountSharesViewer } from '@/src/presentation/components/AccountSharesViewer';
 import { TransactionStepper } from '@/src/presentation/components/TransactionStepper';
@@ -16,6 +17,7 @@ import { useFungibleToken } from '@/src/presentation/hooks/useFungibleToken';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useConfig } from '@/src/presentation/context/ConfigContext';
 import { MIDNIGHT_CONFIG } from '@/src/infrastructure/config/midnight-config';
+import { formatBalance } from '@/src/presentation/utils/format';
 import {
   ShieldCheck,
   Info,
@@ -23,7 +25,6 @@ import {
   Loader2,
   Lock,
   RefreshCw,
-  Coins,
   Cpu,
   Layers,
   Activity,
@@ -32,14 +33,24 @@ import {
   ExternalLink,
   CheckCircle2,
   XCircle,
+  LayoutDashboard,
+  LogOut,
 } from 'lucide-react';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<ActiveNavTab>('actions');
+  const [activeTab, setActiveTab] = useState<ActiveNavTab>('dashboard');
+  const [activeActionTab, setActiveActionTab] = useState<ActionTabType>('transfer');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  const handleNavigateTab = (tab: ActiveNavTab, actionFocus?: string) => {
+    if (actionFocus) {
+      setActiveActionTab(actionFocus as ActionTabType);
+    }
+    setActiveTab(tab);
+  };
 
   const {
     accountAddress,
@@ -92,6 +103,8 @@ export default function HomePage() {
     clearActivityLog,
     activeActionName,
     dismissTxStatus,
+    userDerivedAccountHex,
+    userDerivedAccountBech32,
   } = useFungibleToken();
 
   // Current connected user's spendable and locked token balance
@@ -99,7 +112,7 @@ export default function HomePage() {
   const lockedRawBalance = accountAddress ? getRawLockedBalanceOf(accountAddress) : 0n;
 
   return (
-    <div className="min-h-screen flex bg-slate-950 text-slate-100 selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen flex bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 selection:bg-blue-600 selection:text-white transition-colors duration-200">
       {/* Responsive Collapsible Sidebar */}
       <Sidebar
         activeTab={activeTab}
@@ -123,6 +136,93 @@ export default function HomePage() {
 
         {/* Main Workspace Body (padded bottom on mobile for sticky bottom bar) */}
         <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 md:pb-8">
+          {/* Main Navigation Menu Bar (Directly below Header on every page) */}
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 dark:border-slate-800/80 pb-3 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-1 sm:gap-2">
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === 'dashboard'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Dashboard</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('actions')}
+                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === 'actions'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
+                }`}
+              >
+                <Zap className="w-4 h-4" />
+                <span>Actions</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('ledger')}
+                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === 'ledger'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
+                }`}
+              >
+                <Layers className="w-4 h-4" />
+                <span>Ledger & Shares</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('activity')}
+                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === 'activity'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
+                }`}
+              >
+                <Activity className="w-4 h-4" />
+                <span>Activity ({activityLog.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('diagnostics')}
+                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === 'diagnostics'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
+                }`}
+              >
+                <Cpu className="w-4 h-4" />
+                <span>Diagnostics</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsSettingsModalOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-300 text-xs font-medium transition-colors cursor-pointer shadow-sm dark:shadow-none"
+              >
+                <Server className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
+                <span>Infra Config</span>
+              </button>
+
+              {isConnected && (
+                <button
+                  type="button"
+                  onClick={disconnectWallet}
+                  className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold text-rose-600 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 dark:text-rose-300 transition-all shadow-xs active:scale-95 cursor-pointer"
+                  title="Disconnect active wallet"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
+                  <span>Disconnect</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Lace Wallet Locked Alert Banner */}
           {mode === 'lace' && isConnected && isWalletLocked && (
             <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-950/70 via-amber-900/40 to-amber-950/70 border border-amber-500/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-xs text-amber-200 shadow-xl shadow-amber-950/40 animate-in fade-in">
@@ -172,7 +272,7 @@ export default function HomePage() {
 
                 <button
                   onClick={() => disconnectWallet()}
-                  className="px-3.5 py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white font-medium border border-slate-700/60 transition-colors text-xs"
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white font-medium border border-slate-700/60 transition-colors text-xs cursor-pointer"
                   title="Disconnect wallet session"
                 >
                   Disconnect
@@ -200,7 +300,7 @@ export default function HomePage() {
                     }
                   }}
                   disabled={isConnecting}
-                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-500/20 disabled:opacity-60 text-xs"
+                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-500/20 disabled:opacity-60 text-xs cursor-pointer"
                 >
                   {isConnecting ? (
                     <>
@@ -216,7 +316,7 @@ export default function HomePage() {
                 </button>
                 <button
                   onClick={() => setMode('test')}
-                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition-colors text-xs"
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition-colors text-xs cursor-pointer"
                 >
                   Switch to Test Mode
                 </button>
@@ -234,158 +334,12 @@ export default function HomePage() {
               </div>
               <button
                 onClick={() => setIsWalletModalOpen(true)}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors whitespace-nowrap shadow-md text-xs self-stretch sm:self-auto text-center"
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors whitespace-nowrap shadow-md text-xs self-stretch sm:self-auto text-center cursor-pointer"
               >
                 Select Test Identity
               </button>
             </div>
           )}
-
-          {/* Top KPI Metrics Banner */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            {/* KPI 1: Token Total Supply */}
-            <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900/90 to-slate-950/90 border border-slate-800/80 shadow-md flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                  <span>Total Supply</span>
-                  <Coins className="w-4 h-4 text-blue-400" />
-                </div>
-                <div className="text-xl sm:text-2xl font-bold font-mono text-white tracking-tight truncate">
-                  {metadata.totalSupply.toLocaleString()}
-                </div>
-              </div>
-              <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-800/50">
-                <div className="text-[11px] text-slate-400 font-mono">
-                  {metadata.symbol || 'FT'}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('ledger')}
-                  className="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium transition-colors flex items-center gap-1"
-                >
-                  <span>{synchronizedLedgerReport?.holdersCount || 0} Holders</span>
-                  <span>→</span>
-                </button>
-              </div>
-            </div>
-
-            {/* KPI 2: User Balance */}
-            <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900/90 to-slate-950/90 border border-slate-800/80 shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Your Balance</span>
-                <Wallet className="w-4 h-4 text-cyan-400" />
-              </div>
-              <div className="text-xl sm:text-2xl font-bold font-mono text-cyan-300 tracking-tight truncate">
-                {userBalance.toLocaleString()}
-              </div>
-              <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                {metadata.symbol || 'FT'}
-              </div>
-            </div>
-
-            {/* KPI 3: Contract Initialization Status */}
-            <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900/90 to-slate-950/90 border border-slate-800/80 shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Contract State</span>
-                <Layers className="w-4 h-4 text-indigo-400" />
-              </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span
-                  className={`w-2.5 h-2.5 rounded-full ${
-                    metadata.isInitialized ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                  }`}
-                />
-                <span className="text-base sm:text-lg font-bold text-white tracking-tight">
-                  {metadata.isInitialized ? 'Initialized' : 'Uninitialized'}
-                </span>
-              </div>
-              <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">
-                {metadata.name || 'FungibleToken'}
-              </div>
-            </div>
-
-            {/* KPI 4: Infrastructure & Network */}
-            <div className="p-4 rounded-2xl bg-gradient-to-b from-slate-900/90 to-slate-950/90 border border-slate-800/80 shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span>Network</span>
-                <Server className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-                <span className="text-base sm:text-lg font-bold text-white capitalize tracking-tight">
-                  {preset}
-                </span>
-              </div>
-              <button
-                onClick={() => setIsSettingsModalOpen(true)}
-                className="text-[11px] text-blue-400 hover:text-blue-300 font-mono mt-0.5 flex items-center gap-1 transition-colors"
-              >
-                <span>Manage endpoints</span>
-                <span>→</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Tab Navigation Buttons (Tablet / Desktop Quick Switcher) */}
-          <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-2 overflow-x-auto no-scrollbar">
-            <div className="flex items-center gap-1 sm:gap-2">
-              <button
-                onClick={() => setActiveTab('actions')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === 'actions'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                }`}
-              >
-                <Zap className="w-4 h-4" />
-                <span>Actions</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('ledger')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === 'ledger'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                }`}
-              >
-                <Layers className="w-4 h-4" />
-                <span>Ledger & Shares</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('activity')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === 'activity'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                }`}
-              >
-                <Activity className="w-4 h-4" />
-                <span>Activity ({activityLog.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('diagnostics')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === 'diagnostics'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                }`}
-              >
-                <Cpu className="w-4 h-4" />
-                <span>Diagnostics</span>
-              </button>
-            </div>
-
-            <button
-              onClick={() => setIsSettingsModalOpen(true)}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 font-medium transition-colors"
-            >
-              <Server className="w-3.5 h-3.5 text-blue-400" />
-              <span>Infra Config</span>
-            </button>
-          </div>
 
           {/* Stepper Status Banner */}
           <TransactionStepper
@@ -397,6 +351,29 @@ export default function HomePage() {
             onDismiss={dismissTxStatus}
           />
 
+          {/* Tab 0: Executive Dashboard */}
+          {activeTab === 'dashboard' && (
+            <DashboardView
+              contractAddress={config.contractAddress}
+              metadata={metadata}
+              userBalance={userBalance}
+              lockedRawBalance={lockedRawBalance}
+              accountAddress={accountAddress}
+              userDerivedAccountHex={userDerivedAccountHex}
+              isConnected={isConnected}
+              isWalletLocked={isWalletLocked}
+              synchronizedLedgerReport={synchronizedLedgerReport}
+              indexerReport={indexerReport}
+              activityLog={activityLog}
+              infraStatus={infraStatus}
+              preset={preset}
+              onNavigateTab={handleNavigateTab}
+              onRefreshLedger={() => fetchIndexerReport(config.contractAddress, config.indexerUrl)}
+              onOpenSettings={() => setIsSettingsModalOpen(true)}
+              onOpenWalletModal={() => setIsWalletModalOpen(true)}
+            />
+          )}
+
           {/* Tab 1: Interactive Circuit Actions */}
           {activeTab === 'actions' && (
             <div className="space-y-6 animate-in fade-in duration-200">
@@ -405,29 +382,22 @@ export default function HomePage() {
                 metadata={metadata}
                 userBalance={userBalance}
                 lockedRawBalance={lockedRawBalance}
+                userDerivedAccountHex={userDerivedAccountHex}
+                userDerivedAccountBech32={userDerivedAccountBech32}
                 infraStatus={infraStatus}
+                network={preset}
                 onResetContractState={resetContractCache}
+                variant="compact"
               />
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">Contract Actions</h2>
-                  <p className="text-xs text-slate-400">
-                    Invoke zero-knowledge circuits compiled from <code className="font-mono text-blue-400">fungible-token.compact</code>
-                  </p>
-                </div>
-                {metadata.isInitialized && (
-                  <span className="self-start sm:self-auto text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Ready for transactions
-                  </span>
-                )}
-              </div>
 
               <TokenActions
                 contractAddress={config.contractAddress}
                 onResetContractState={resetContractCache}
                 metadata={metadata}
+                userBalance={userBalance}
+                lockedRawBalance={lockedRawBalance}
+                userDerivedAccountHex={userDerivedAccountHex}
+                userDerivedAccountBech32={userDerivedAccountBech32}
                 txStatus={txStatus}
                 statusMessage={statusMessage}
                 currentTxHash={currentTxHash}
@@ -446,6 +416,7 @@ export default function HomePage() {
                 onSetEmergencyPauser={setEmergencyPauser}
                 onEmergencyWithdraw={emergencyWithdraw}
                 onAdminReallocate={adminReallocate}
+                initialActionTab={activeActionTab}
               />
             </div>
           )}
@@ -453,6 +424,16 @@ export default function HomePage() {
           {/* Tab 2: Ledger State Inspection & Contract Overview */}
           {activeTab === 'ledger' && (
             <div className="space-y-6 animate-in fade-in duration-200">
+              <ContractOverview
+                contractAddress={config.contractAddress}
+                metadata={metadata}
+                userBalance={userBalance}
+                lockedRawBalance={lockedRawBalance}
+                infraStatus={infraStatus}
+                network={preset}
+                onResetContractState={resetContractCache}
+              />
+
               {/* Midnight Indexer & Account Token Distribution */}
               <AccountSharesViewer
                 report={indexerReport}
@@ -460,15 +441,8 @@ export default function HomePage() {
                 onRefresh={() => fetchIndexerReport(config.contractAddress, config.indexerUrl)}
                 contractAddress={config.contractAddress}
                 synchronizedLedgerReport={synchronizedLedgerReport}
-              />
-
-              <ContractOverview
-                contractAddress={config.contractAddress}
-                metadata={metadata}
-                userBalance={userBalance}
-                lockedRawBalance={lockedRawBalance}
-                infraStatus={infraStatus}
-                onResetContractState={resetContractCache}
+                currentUserAddress={accountAddress}
+                userDerivedAddressHex={userDerivedAccountHex}
               />
 
               <div className="border-t border-slate-900 pt-6">

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Zap, Database, History, Server, Settings } from 'lucide-react';
+import { LayoutDashboard, Zap, Database, History, Server, Settings } from 'lucide-react';
 import type { ActiveNavTab } from './Sidebar';
 
 interface MobileBottomNavProps {
@@ -16,6 +16,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   onOpenSettings,
 }) => {
   const tabs = [
+    { id: 'dashboard' as ActiveNavTab, label: 'Dash', icon: LayoutDashboard },
     { id: 'actions' as ActiveNavTab, label: 'Actions', icon: Zap },
     { id: 'ledger' as ActiveNavTab, label: 'Shares', icon: Database },
     { id: 'activity' as ActiveNavTab, label: 'Activity', icon: History },

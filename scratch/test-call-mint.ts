@@ -73,24 +73,24 @@ class CustomZkConfigProvider extends ZKConfigProvider<string> {
   }
 
   async getZKIR(circuitId: string): Promise<any> {
-    const file = fs.readFileSync(`scratch/compiled-test/zkir/${circuitId}.bzkir`);
+    const file = fs.readFileSync(`public/zkir/fungible-token/zkir/${circuitId}.bzkir`);
     return createZKIR(new Uint8Array(file));
   }
 
   async getVerifierKey(circuitId: string): Promise<any> {
-    const file = fs.readFileSync(`scratch/compiled-test/keys/${circuitId}.verifier`);
+    const file = fs.readFileSync(`public/zkir/fungible-token/keys/${circuitId}.verifier`);
     return createVerifierKey(new Uint8Array(file));
   }
 
   async getProverKey(circuitId: string): Promise<any> {
-    const file = fs.readFileSync(`scratch/compiled-test/keys/${circuitId}.prover`);
+    const file = fs.readFileSync(`public/zkir/fungible-token/keys/${circuitId}.prover`);
     return createProverKey(new Uint8Array(file));
   }
 }
 
 async function test() {
-  const contractAddress = '8cefec943e9f715f21f766edb501ea1fb12a9e8a69c4a3281a133cac6b5ee271';
-  const ownerSecretKey = Buffer.from('e6cd62ba8eb1f8aad56eb24ce77b6f7e63a8d1261f8c70b0040b587a529239e0', 'hex');
+  const contractAddress = '1f671d56337df583a799cc8657098a1601272e63b89ca706c6894fb8c8e8714b';
+  const ownerSecretKey = Buffer.from('a3c24122f1bc023501cbe0edd21a99e2ac09a8072ab3693a450b0689549e5998', 'hex');
 
   const witnesses = {
     localSecretKey: (ctx: any) => {

@@ -49,7 +49,7 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'failed'>('all');
-  const [scopeFilter, setScopeFilter] = useState<'current' | 'all'>('current');
+  const [scopeFilter, setScopeFilter] = useState<'current' | 'all'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -284,6 +284,13 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
         return {
           icon: <RotateCcw className="w-3.5 h-3.5 text-teal-400" />,
           bg: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
+        };
+      case 'initialize':
+      case 'deploy':
+      case 'deploycontract':
+        return {
+          icon: <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />,
+          bg: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
         };
       default:
         return {

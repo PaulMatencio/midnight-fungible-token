@@ -28,10 +28,14 @@ import {
   queryIndexerContractState,
   calculateAccountSharesFromLedger,
   formatBech32Address,
+  formatBalance,
   CONTRACT_ACTION_QUERY,
   toByteArray,
   type IndexerTokenReport,
+  type AccountShare,
 } from '@/src/infrastructure/midnight/midnight-indexer-client';
+
+export { formatBalance };
 
 import { bech32m } from '@scure/base';
 
@@ -134,23 +138,25 @@ export function extractDetailedErrorMessage(err: any): string {
       messages.push(curr);
       break;
     }
-    if (curr.info && typeof curr.info === 'string') {
-      messages.push(curr.info);
+    if (curr.reason && typeof curr.reason === 'string' && curr.reason.trim()) {
+      messages.push(curr.reason.trim());
     }
-    if (curr.reason && typeof curr.reason === 'string') {
-      messages.push(curr.reason);
+    if (curr.info && typeof curr.info === 'string' && curr.info.trim()) {
+      messages.push(curr.info.trim());
     }
-    if (curr.description && typeof curr.description === 'string') {
-      messages.push(curr.description);
+    if (curr.description && typeof curr.description === 'string' && curr.description.trim()) {
+      messages.push(curr.description.trim());
     }
-    if (curr.message && typeof curr.message === 'string' && curr.message !== 'Error') {
-      messages.push(curr.message);
+    if (curr.message && typeof curr.message === 'string' && curr.message !== 'Error' && curr.message.trim()) {
+      messages.push(curr.message.trim());
     }
     if (curr.code !== undefined && curr.code !== null) {
-      if (curr.code === 2) {
+      if (curr.code === 2 || curr.code === 'Rejected' || curr.code === 'PermissionRejected') {
         messages.push('Transaction was declined or cancelled in Lace wallet.');
       } else if (curr.code === 1) {
         messages.push('Lace wallet rejected the transaction request.');
+      } else if (typeof curr.code === 'string' && curr.code !== 'InternalError') {
+        messages.push(`Lace wallet error (${curr.code})`);
       }
     }
     curr = curr.cause;
@@ -159,39 +165,71 @@ export function extractDetailedErrorMessage(err: any): string {
 
   const cleaned = messages
     .map((m) => m.replace(/^Unexpected error (submitting|executing) scoped transaction '<[^>]+>':\s*/i, '').trim())
-    .filter((m) => m && m !== 'Error');
+    .filter((m) => m && m !== 'Error' && !m.startsWith("Unexpected error submitting scoped transaction '<unnamed>': Error"));
 
   if (cleaned.length > 0) {
     return cleaned[0];
   }
-  const fallback = err?.message || err?.reason;
-  if (fallback && fallback !== 'Error') return fallback;
+  const fallback = err?.reason || (err?.message && err.message !== 'Error' ? err.message : null);
+  if (fallback) {
+    const cleanedFallback = fallback.replace(/^Unexpected error (submitting|executing) scoped transaction '<[^>]+>':\s*/i, '').trim();
+    if (cleanedFallback && cleanedFallback !== 'Error' && !cleanedFallback.startsWith("Unexpected error submitting scoped transaction '<unnamed>': Error")) {
+      return cleanedFallback;
+    }
+  }
   return 'Lace wallet transaction submission failed or was declined. Please verify that your Lace wallet is unlocked, has sufficient DUST balance, and that you confirmed the popup in Lace.';
 }
 
 const LACE_STORAGE_KEY_PREFIX = 'midnight_fungible_token_lace_state_';
 const ACTIVITY_STORAGE_KEY_PREFIX = 'midnight_fungible_token_activity_';
 const MASTER_AUDIT_LOG_KEY = 'midnight_fungible_token_audit_log_master_v2';
+const LEGACY_MASTER_AUDIT_LOG_KEY = 'midnight_fungible_token_audit_log_master';
 const TOKEN_META_KEY_PREFIX = 'midnight_fungible_token_meta_';
-const MAX_PERSISTED_ACTIVITIES = 500;
+const MAX_PERSISTED_ACTIVITIES = 1000;
 
-export function loadPersistentActivities(contractAddress: string): ActivityItem[] {
+export function loadPersistentActivities(contractAddress?: string): ActivityItem[] {
   if (typeof window === 'undefined') return [];
   try {
-    const masterJson = localStorage.getItem(MASTER_AUDIT_LOG_KEY);
-    const contractJson = contractAddress ? localStorage.getItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${contractAddress}`) : null;
-    const masterItems: ActivityItem[] = masterJson ? JSON.parse(masterJson) : [];
-    const contractItems: ActivityItem[] = contractJson ? JSON.parse(contractJson) : [];
-
     const itemMap = new Map<string, ActivityItem>();
-    [...masterItems, ...contractItems].forEach((item) => {
-      if (item && item.id) {
-        const existing = itemMap.get(item.id);
-        if (!existing || (item.status === 'confirmed' && existing.status !== 'confirmed')) {
-          itemMap.set(item.id, item);
+
+    // Helper to safely parse and merge
+    const ingestJson = (raw: string | null) => {
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((item) => {
+            if (item && item.id) {
+              const existing = itemMap.get(item.id);
+              if (!existing || (item.status === 'confirmed' && existing.status !== 'confirmed')) {
+                itemMap.set(item.id, item);
+              }
+            }
+          });
+        }
+      } catch {}
+    };
+
+    // 1. Read Master key v2
+    ingestJson(localStorage.getItem(MASTER_AUDIT_LOG_KEY));
+
+    // 2. Read Legacy Master key
+    ingestJson(localStorage.getItem(LEGACY_MASTER_AUDIT_LOG_KEY));
+
+    // 3. Read specific contract key if specified
+    if (contractAddress) {
+      ingestJson(localStorage.getItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${contractAddress}`));
+    }
+
+    // 4. Scan all localStorage keys for any other activity or audit logs
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith(ACTIVITY_STORAGE_KEY_PREFIX) || key.includes('audit_log') || key.includes('activity'))) {
+          ingestJson(localStorage.getItem(key));
         }
       }
-    });
+    } catch {}
 
     return Array.from(itemMap.values())
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
@@ -202,8 +240,16 @@ export function loadPersistentActivities(contractAddress: string): ActivityItem[
   }
 }
 
-export function savePersistentActivities(items: ActivityItem[], contractAddress?: string): void {
+export function savePersistentActivities(
+  items: ActivityItem[],
+  contractAddress?: string,
+  forceClear = false
+): void {
   if (typeof window === 'undefined') return;
+  // Guard: NEVER overwrite existing storage with an empty array unless explicitly forced
+  if (!forceClear && (!items || items.length === 0)) {
+    return;
+  }
   try {
     const trimmed = items.slice(0, MAX_PERSISTED_ACTIVITIES);
     localStorage.setItem(MASTER_AUDIT_LOG_KEY, JSON.stringify(trimmed));
@@ -399,7 +445,12 @@ export function useFungibleToken() {
   const [currentBlock, setCurrentBlock] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [activeActionName, setActiveActionName] = useState<string | null>(null);
-  const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
+  const [activityLog, setActivityLog] = useState<ActivityItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      return loadPersistentActivities(activeContractAddress);
+    }
+    return [];
+  });
 
   const dismissTxStatus = useCallback(() => {
     setTxStatus('idle');
@@ -429,22 +480,54 @@ export function useFungibleToken() {
     new BehaviorSubject<FungibleTokenLedgerState | null>(null)
   );
 
-  const isActivityLogLoadedRef = useRef(false);
-
-  // Load persistent activity & audit log on client mount and whenever activeContractAddress resolves
+  // Dual-layer persistence sync: load from localStorage and merge with server-side file persistence
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const persisted = loadPersistentActivities(activeContractAddress);
-      setActivityLog(persisted);
-      isActivityLogLoadedRef.current = true;
-    }
+    let mounted = true;
+
+    const syncActivities = async () => {
+      if (typeof window === 'undefined') return;
+
+      // 1. Immediately read all localStorage items
+      const localItems = loadPersistentActivities(activeContractAddress);
+      if (mounted && localItems.length > 0) {
+        setActivityLog((prev) => {
+          const map = new Map<string, ActivityItem>();
+          [...localItems, ...prev].forEach((item) => {
+            if (item && item.id) map.set(item.id, item);
+          });
+          return Array.from(map.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        });
+      }
+
+      // 2. Query server-side file persistence (/api/activities) to merge cross-session / cross-device records
+      try {
+        const res = await fetch('/api/activities');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.activities) && data.activities.length > 0) {
+            if (mounted) {
+              setActivityLog((prev) => {
+                const map = new Map<string, ActivityItem>();
+                [...data.activities, ...localItems, ...prev].forEach((item: ActivityItem) => {
+                  if (item && item.id) map.set(item.id, item);
+                });
+                const merged = Array.from(map.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                savePersistentActivities(merged, activeContractAddress);
+                return merged;
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[useFungibleToken] Could not fetch server-side activities:', err);
+      }
+    };
+
+    syncActivities();
+    return () => {
+      mounted = false;
+    };
   }, [activeContractAddress]);
-
-  // Persist activityLog to localStorage on changes (only after initial load)
-  useEffect(() => {
-    if (!isActivityLogLoadedRef.current) return;
-    savePersistentActivities(activityLog, activeContractAddress);
-  }, [activityLog, activeContractAddress]);
 
   const recordActivityEntry = useCallback((entry: ActivityItem) => {
     setActivityLog((prev) => {
@@ -452,14 +535,36 @@ export function useFungibleToken() {
       savePersistentActivities(updated, activeContractAddress);
       return updated;
     });
+
+    // Mirror to server-side file persistence
+    fetch('/api/activities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activity: entry }),
+    }).catch(() => {});
   }, [activeContractAddress]);
 
   const updateActivityEntry = useCallback((id: string, updates: Partial<ActivityItem>) => {
+    let updatedItem: ActivityItem | undefined;
     setActivityLog((prev) => {
-      const updated = prev.map((item) => (item.id === id ? { ...item, ...updates } : item));
+      const updated = prev.map((item) => {
+        if (item.id === id) {
+          updatedItem = { ...item, ...updates };
+          return updatedItem;
+        }
+        return item;
+      });
       savePersistentActivities(updated, activeContractAddress);
       return updated;
     });
+
+    if (updatedItem) {
+      fetch('/api/activities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activity: updatedItem }),
+      }).catch(() => {});
+    }
   }, [activeContractAddress]);
 
   const activeContractSaltBytes = useMemo(() => {
@@ -778,6 +883,7 @@ export function useFungibleToken() {
       try {
         const report = await queryIndexerContractState(targetAddr, targetUrl, {
           currentUserAddress: accountAddress,
+          contractSalt: activeContractSaltBytes,
           networkId: MIDNIGHT_CONFIG.networkId,
         });
         setIndexerReport(report);
@@ -789,7 +895,7 @@ export function useFungibleToken() {
         setIsQueryingIndexer(false);
       }
     },
-    [accountAddress]
+    [accountAddress, activeContractAddress, activeContractSaltBytes]
   );
 
   // Compute live account shares from the active synchronized ledger state
@@ -798,10 +904,11 @@ export function useFungibleToken() {
     return calculateAccountSharesFromLedger(ledgerState, {
       contractAddress: activeContractAddress,
       currentUserAddress: accountAddress,
+      contractSalt: activeContractSaltBytes,
       networkId: MIDNIGHT_CONFIG.networkId,
       source: mode === 'test' ? 'simulated' : 'local_cache',
     });
-  }, [ledgerState, accountAddress, mode]);
+  }, [ledgerState, accountAddress, activeContractSaltBytes, mode, activeContractAddress]);
 
   // Synchronize state when Mode changes
   useEffect(() => {
@@ -1157,7 +1264,8 @@ export function useFungibleToken() {
           setStatusMessage('');
         }, 5000);
 
-        throw err;
+        const errorToThrow = new Error(errMsg, { cause: err });
+        throw errorToThrow;
       }
     },
     [mode, extensionApi, showToast, refreshBalances, activeContractAddress, fetchLaceOnChainState, fetchIndexerReport, extractMetadata, recordActivityEntry, updateActivityEntry]
@@ -1166,35 +1274,75 @@ export function useFungibleToken() {
   // Direct queries (read-only) against current decoded ledger state
   const getBalanceOf = useCallback(
     (accountHex: string): bigint => {
-      if (!ledgerState || !ledgerState._balances) return 0n;
-      const accountBytes = hexToBytes(accountHex);
-      // 1. Check spendable derived account first (this is the only balance that can be authenticated & transferred)
+      if (!accountHex) return 0n;
+      const accountBytes = addressToBytes32(accountHex);
+      let derived: Uint8Array | null = null;
       try {
-        const derived = FungibleTokenClient.deriveAccount(accountBytes, activeContractSaltBytes);
-        if (ledgerState._balances.member(derived)) {
+        derived = FungibleTokenClient.deriveAccount(accountBytes, activeContractSaltBytes);
+      } catch {}
+
+      // 1. Check spendable derived account first in live synchronized ledger state
+      if (ledgerState && ledgerState._balances) {
+        if (derived && ledgerState._balances.member(derived)) {
           return ledgerState._balances.lookup(derived);
         }
-      } catch {}
-      // 2. If the queried account is already a derived spendable account (e.g. metadata.owner)
-      if (ledgerState._balances.member(accountBytes)) {
-        return ledgerState._balances.lookup(accountBytes);
+        if (ledgerState._balances.member(accountBytes)) {
+          return ledgerState._balances.lookup(accountBytes);
+        }
       }
+
+      // 2. Check in synchronizedLedgerReport and indexerReport holders
+      const derivedHex = derived ? bytesToHex(derived).toLowerCase() : '';
+      const rawHex = bytesToHex(accountBytes).toLowerCase();
+      const cleanInput = accountHex.toLowerCase().replace(/^0x/, '');
+      const isAccountConnectedUser = Boolean(
+        accountAddress &&
+          (cleanInput === accountAddress.toLowerCase().replace(/^0x/, '') ||
+            accountHex === accountAddress ||
+            (accountAddress.startsWith('mn_') && formatBech32Address(rawHex).toLowerCase() === accountAddress.toLowerCase()))
+      );
+
+      const findInHolders = (reportHolders?: AccountShare[]): bigint | null => {
+        if (!reportHolders || reportHolders.length === 0) return null;
+        const matched = reportHolders.find((h) => {
+          const hHex = h.addressHex.toLowerCase();
+          if (derivedHex && hHex === derivedHex) return true;
+          if (hHex === rawHex) return true;
+          if (cleanInput && hHex === cleanInput) return true;
+          if (h.addressBech32 && h.addressBech32.toLowerCase() === cleanInput) return true;
+          if (isAccountConnectedUser && h.isCurrentUser) return true;
+          return false;
+        });
+        return matched !== undefined ? matched.balance : null;
+      };
+
+      const syncBalance = findInHolders(synchronizedLedgerReport?.holders);
+      if (syncBalance !== null) return syncBalance;
+
+      const indexerBalance = findInHolders(indexerReport?.holders);
+      if (indexerBalance !== null) return indexerBalance;
+
       return 0n;
     },
-    [ledgerState, activeContractSaltBytes]
+    [ledgerState, activeContractSaltBytes, synchronizedLedgerReport, indexerReport, accountAddress]
   );
 
   const getRawLockedBalanceOf = useCallback(
     (accountHex: string): bigint => {
-      if (!ledgerState || !ledgerState._balances) return 0n;
-      const accountBytes = hexToBytes(accountHex);
-      // Returns balance sitting at the raw wallet address (unspendable due to ZK authenticate requirement)
-      if (ledgerState._balances.member(accountBytes)) {
-        return ledgerState._balances.lookup(accountBytes);
+      if (!accountHex) return 0n;
+      const accountBytes = addressToBytes32(accountHex);
+      if (ledgerState && ledgerState._balances) {
+        if (ledgerState._balances.member(accountBytes)) {
+          return ledgerState._balances.lookup(accountBytes);
+        }
       }
-      return 0n;
+      const rawHex = bytesToHex(accountBytes).toLowerCase();
+      const match = (synchronizedLedgerReport?.holders || indexerReport?.holders)?.find(
+        (h) => h.addressHex.toLowerCase() === rawHex
+      );
+      return match ? match.balance : 0n;
     },
-    [ledgerState]
+    [ledgerState, synchronizedLedgerReport, indexerReport]
   );
 
   const getAllowance = useCallback(
@@ -1585,14 +1733,45 @@ export function useFungibleToken() {
     if (typeof window !== 'undefined') {
       try {
         localStorage.removeItem(MASTER_AUDIT_LOG_KEY);
-        localStorage.removeItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+        localStorage.removeItem(LEGACY_MASTER_AUDIT_LOG_KEY);
+        if (activeContractAddress) {
+          localStorage.removeItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+        }
       } catch (e) {
         console.warn('[useFungibleToken] Failed to clear activity log from localStorage:', e);
       }
     }
+    savePersistentActivities([], activeContractAddress, true);
     setActivityLog([]);
+    // Clear server-side audit file as well
+    fetch('/api/activities', { method: 'DELETE' }).catch((err) => {
+      console.warn('[useFungibleToken] Failed to clear server-side activities:', err);
+    });
     showToast('info', 'Audit Trail Cleared', 'Persistent audit and activity logs have been reset.');
   }, [activeContractAddress, showToast]);
+
+  // Computed derived spendable account address for connected user
+  const userDerivedAccountHex = useMemo(() => {
+    if (!accountAddress) return null;
+    try {
+      const bytes = addressToBytes32(accountAddress);
+      const derived = FungibleTokenClient.deriveAccount(bytes, activeContractSaltBytes);
+      return bytesToHex(derived).toLowerCase();
+    } catch {
+      return null;
+    }
+  }, [accountAddress, activeContractSaltBytes]);
+
+  const userDerivedAccountBech32 = useMemo(() => {
+    if (!accountAddress) return null;
+    try {
+      const bytes = addressToBytes32(accountAddress);
+      const derived = FungibleTokenClient.deriveAccount(bytes, activeContractSaltBytes);
+      return formatBech32Address(derived, MIDNIGHT_CONFIG.networkId);
+    } catch {
+      return null;
+    }
+  }, [accountAddress, activeContractSaltBytes]);
 
   return {
     metadata,
@@ -1625,5 +1804,7 @@ export function useFungibleToken() {
     resetContractCache,
     activeActionName,
     dismissTxStatus,
+    userDerivedAccountHex,
+    userDerivedAccountBech32,
   };
 }

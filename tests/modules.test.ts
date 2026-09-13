@@ -66,6 +66,55 @@ describe('Module A: Midnight DApp Connector & Wallet Provider', () => {
     expect(txId).toBe('0x' + '11'.repeat(32));
   });
 
+  it('should support balanceUnsealedTransaction and format descriptive error messages', async () => {
+    // 1. Successful balanceUnsealedTransaction mock
+    const mockSuccessApi = {
+      getCoinPublicKey: () => 'aa'.repeat(32),
+      getEncryptionPublicKey: () => 'bb'.repeat(32),
+      balanceUnsealedTransaction: async (hex: string, options?: any) => {
+        return { tx: '010203' };
+      },
+    };
+    const provider = createLaceWalletProvider(mockSuccessApi);
+    // When serialized string hex '010203' is returned, balanceTx attempts deserialization;
+    // test that it gracefully extracts or formats error on invalid tx header
+    await expect(provider.balanceTx({ data: 123 })).rejects.toThrow(/Failed to deserialize balanced transaction from Lace/i);
+
+    // 2. User rejected in Lace
+    const mockRejectApi = {
+      balanceUnsealedTransaction: async () => {
+        const err: any = new Error('');
+        err.code = 'Rejected';
+        err.reason = 'User declined the transaction in Lace';
+        throw err;
+      },
+    };
+    const rejectProvider = createLaceWalletProvider(mockRejectApi);
+    await expect(rejectProvider.balanceTx({ data: 123 })).rejects.toThrow(/User declined the transaction in Lace|declined/i);
+
+    // 3. Locked wallet in Lace
+    const mockLockedApi = {
+      balanceUnsealedTransaction: async () => {
+        const err: any = new Error('Wallet is locked');
+        err.code = 'InternalError';
+        throw err;
+      },
+    };
+    const lockedProvider = createLaceWalletProvider(mockLockedApi);
+    await expect(lockedProvider.balanceTx({ data: 123 })).rejects.toThrow(/wallet is locked/i);
+
+    // 4. Insufficient fees in Lace
+    const mockFeeApi = {
+      balanceUnsealedTransaction: async () => {
+        const err: any = new Error('');
+        err.reason = 'Not enough coins to balance the transaction';
+        throw err;
+      },
+    };
+    const feeProvider = createLaceWalletProvider(mockFeeApi);
+    await expect(feeProvider.balanceTx({ data: 123 })).rejects.toThrow(/Insufficient DUST or tNIGHT balance|Not enough coins/i);
+  });
+
   it('should connect to InitialAPI v4 with connect(networkId) and UUID key', async () => {
     const { connectLaceWallet } = await import('../src/infrastructure/midnight/midnight-dapp-connector');
     
@@ -593,6 +642,58 @@ describe('Module G: Midnight Indexer Contract Query & Account Share Calculation'
     expect(report.holders).toEqual([]);
     expect(report.largestHolderShare).toBe(0);
     expect(report.top3Share).toBe(0);
+  });
+
+  it('should map an on-chain derived address back to the connected raw Lace wallet address and label it as You', async () => {
+    const { resolveAccountLabel, calculateAccountSharesFromLedger, bytesToHex, formatBech32Address } = await import(
+      '../src/infrastructure/midnight/midnight-indexer-client'
+    );
+    const { FungibleTokenClient } = await import('../src/client/fungible-token-sdk');
+
+    const laceWalletAddress = 'mn_addr_preprod19g3x5k5kgmpuklm35jc6vj90hgaup89jnatx7sskmzpfnytlxjysw0wln8';
+    const testSalt = new Uint8Array(32).fill(42);
+
+    // Derive on-chain identity from raw Lace wallet address
+    const { addressToBytes32 } = await import('../src/infrastructure/midnight/midnight-indexer-client');
+    const userBytes = addressToBytes32(laceWalletAddress);
+    const derivedBytes = FungibleTokenClient.deriveAccount(userBytes, testSalt);
+    const derivedHex = bytesToHex(derivedBytes);
+
+    // 1. Test resolveAccountLabel directly
+    const labelResult = resolveAccountLabel(derivedHex, laceWalletAddress, testSalt);
+    expect(labelResult.isCurrentUser).toBe(true);
+    expect(labelResult.label).toBe('You (Lace Wallet)');
+    expect(labelResult.mappedWalletAddress).toBe(laceWalletAddress);
+
+    // 2. Test calculateAccountSharesFromLedger with derived holder
+    const mockBalancesMap = new Map<Uint8Array, bigint>();
+    mockBalancesMap.set(derivedBytes, 33_000_000_000n); // The Lace user's on-chain derived account
+
+    const mockLedger: any = {
+      _name: 'Escaldes Token',
+      _symbol: 'ESCT',
+      _decimals: 6n,
+      _totalSupply: 33_000_000_000n,
+      _isInitialized: true,
+      owner: derivedBytes,
+      _balances: {
+        [Symbol.iterator]: () => mockBalancesMap.entries(),
+      },
+    };
+
+    const report = calculateAccountSharesFromLedger(mockLedger, {
+      contractAddress: '1f671d56337df583a799cc8657098a1601272e63b89ca706c6894fb8c8e8714b',
+      currentUserAddress: laceWalletAddress,
+      contractSalt: testSalt,
+    });
+
+    expect(report.holders.length).toBe(1);
+    const userHolder = report.holders[0];
+    expect(userHolder.isCurrentUser).toBe(true);
+    expect(userHolder.isOwner).toBe(true);
+    expect(userHolder.label).toContain('You');
+    expect(userHolder.mappedWalletAddress).toBe(laceWalletAddress);
+    expect(userHolder.balance).toBe(33_000_000_000n);
   });
 });
 

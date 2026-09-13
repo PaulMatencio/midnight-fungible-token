@@ -28,18 +28,26 @@ import {
   Key,
   CheckCircle2,
   Loader2,
+  Coins,
+  Zap,
+  Crown,
 } from 'lucide-react';
 import { PRESET_IDENTITIES, MIDNIGHT_CONFIG, getExplorerContractUrl } from '@/src/infrastructure/config/midnight-config';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { bech32m } from '@scure/base';
 import { FungibleTokenClient } from '@/src/client/fungible-token-sdk';
 import { hexToBytes, bytesToHex, addressToBytes32, addressToHex32 } from '@/src/presentation/hooks/useFungibleToken';
+import { formatBalance } from '@/src/presentation/utils/format';
 import type { TokenMetadata, TransactionStatus } from '@/src/types/dapp';
 
 interface TokenActionsProps {
   contractAddress?: string;
   onResetContractState?: () => void;
   metadata: TokenMetadata;
+  userBalance?: bigint;
+  lockedRawBalance?: bigint;
+  userDerivedAccountHex?: string | null;
+  userDerivedAccountBech32?: string | null;
   txStatus: TransactionStatus;
   statusMessage?: string;
   currentTxHash?: string | null;
@@ -63,14 +71,48 @@ interface TokenActionsProps {
     amount: bigint,
     ownerSecretKey?: string
   ) => Promise<any>;
+  initialActionTab?: TabType;
 }
 
-type TabType = 'transfer' | 'approve' | 'transferFrom' | 'mint' | 'burn' | 'reallocate' | 'emergency' | 'init';
+export type TabType = 'transfer' | 'approve' | 'transferFrom' | 'mint' | 'burn' | 'reallocate' | 'emergency' | 'init';
+export type ActionCategory = 'transfers' | 'supply' | 'admin';
+
+const TAB_CATEGORY: Record<TabType, ActionCategory> = {
+  transfer: 'transfers',
+  approve: 'transfers',
+  transferFrom: 'transfers',
+  mint: 'supply',
+  burn: 'supply',
+  emergency: 'admin',
+  reallocate: 'admin',
+  init: 'admin',
+};
+
+const DEFAULT_TAB_FOR_CATEGORY: Record<ActionCategory, TabType> = {
+  transfers: 'transfer',
+  supply: 'mint',
+  admin: 'emergency',
+};
+
+const TAB_CIRCUIT_SIGNATURES: Record<TabType, string> = {
+  transfer: 'transfer(caller, to, value)',
+  approve: 'approve(caller, spender, value)',
+  transferFrom: 'transferFrom(caller, from, to, value)',
+  mint: 'mint(caller, to, value)',
+  burn: 'burn(caller, from, value)',
+  emergency: 'pause(caller) / unpause(caller)',
+  reallocate: 'adminReallocate(caller, trapped, target, value)',
+  init: 'constructor(name, symbol, decimals)',
+};
 
 export const TokenActions: React.FC<TokenActionsProps> = ({
   contractAddress,
   onResetContractState,
   metadata,
+  userBalance = 0n,
+  lockedRawBalance = 0n,
+  userDerivedAccountHex: propUserDerivedAccountHex,
+  userDerivedAccountBech32,
   txStatus,
   statusMessage,
   currentTxHash,
@@ -89,6 +131,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
   onSetEmergencyPauser,
   onEmergencyWithdraw,
   onAdminReallocate,
+  initialActionTab,
 }) => {
   const targetContractAddress = contractAddress || MIDNIGHT_CONFIG.contractAddress;
   const [copiedContractAddr, setCopiedContractAddr] = useState(false);
@@ -96,6 +139,16 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
     navigator.clipboard.writeText(text);
     setCopiedContractAddr(true);
     setTimeout(() => setCopiedContractAddr(false), 2000);
+  };
+
+  const MAX_UINT128 = 340282366920938463463374607431768211455n;
+  const isCapped = Boolean(metadata.maxSupply && metadata.maxSupply > 0n && metadata.maxSupply < MAX_UINT128);
+  const remainingCap = isCapped && metadata.maxSupply
+    ? (metadata.maxSupply > metadata.totalSupply ? metadata.maxSupply - metadata.totalSupply : 0n)
+    : null;
+
+  const formatUnits = (amount: bigint, decimals: number): string => {
+    return formatBalance(amount, decimals, 4);
   };
   const {
     mode,
@@ -106,7 +159,27 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
     activeIdentity,
     selectPresetIdentity,
   } = useWallet();
-  const [activeTab, setActiveTab] = useState<TabType>('transfer');
+  const [activeTab, setActiveTab] = useState<TabType>(initialActionTab || 'transfer');
+  const [activeCategory, setActiveCategory] = useState<ActionCategory>(() => TAB_CATEGORY[initialActionTab || 'transfer'] || 'transfers');
+
+  useEffect(() => {
+    if (initialActionTab) {
+      setActiveTab(initialActionTab);
+      setActiveCategory(TAB_CATEGORY[initialActionTab] || 'transfers');
+    }
+  }, [initialActionTab]);
+
+  const handleCategorySwitch = (cat: ActionCategory) => {
+    setActiveCategory(cat);
+    if (TAB_CATEGORY[activeTab] !== cat) {
+      setActiveTab(DEFAULT_TAB_FOR_CATEGORY[cat]);
+    }
+  };
+
+  const handleTabSwitch = (tab: TabType) => {
+    setActiveTab(tab);
+    setActiveCategory(TAB_CATEGORY[tab]);
+  };
 
   // Form states initialized depending on mode
   const [transferTo, setTransferTo] = useState<string>('');
@@ -184,15 +257,16 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
   }, [metadata.owner, derivedOwnerAccountHex]);
 
   const userDerivedAccountHex = useMemo(() => {
+    if (propUserDerivedAccountHex) return propUserDerivedAccountHex;
     if (!accountAddress) return '';
     try {
-      const bytes = hexToBytes(accountAddress);
+      const bytes = addressToBytes32(accountAddress);
       const derived = FungibleTokenClient.deriveAccount(bytes, activeSalt);
       return bytesToHex(derived);
     } catch {
       return '';
     }
-  }, [accountAddress, activeSalt]);
+  }, [propUserDerivedAccountHex, accountAddress, activeSalt]);
 
   const isWalletOwner = useMemo(() => {
     if (metadata.isCallerOwner) return true;
@@ -398,22 +472,22 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
     const curIdx = order.indexOf(txStatus);
 
     return (
-      <div className="p-3.5 rounded-xl bg-slate-950/80 border border-cyan-500/40 space-y-2.5 animate-in fade-in">
+      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-cyan-500/40 space-y-2.5 animate-in fade-in shadow-xs">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <span className="flex h-2 w-2 relative">
               {txStatus === 'confirmed' ? (
-                <span className="rounded-full h-2 w-2 bg-emerald-400" />
+                <span className="rounded-full h-2 w-2 bg-emerald-600 dark:bg-emerald-400" />
               ) : txStatus === 'failed' ? (
-                <span className="rounded-full h-2 w-2 bg-rose-400" />
+                <span className="rounded-full h-2 w-2 bg-rose-600 dark:bg-rose-400" />
               ) : (
                 <>
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 dark:bg-cyan-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600 dark:bg-cyan-500" />
                 </>
               )}
             </span>
-            <span className="font-semibold text-white">
+            <span className="font-semibold text-slate-900 dark:text-white">
               {txStatus === 'confirmed'
                 ? 'Transaction Committed On-Chain!'
                 : txStatus === 'failed'
@@ -421,7 +495,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                 : `Step ${Math.min(5, curIdx + 1)} of 5: ${statusMessage || 'Processing...'}`}
             </span>
           </div>
-          <span className="text-[11px] font-mono text-cyan-400 font-bold">
+          <span className="text-[11px] font-mono text-blue-900 dark:text-cyan-400 font-bold">
             {txStatus === 'confirmed' ? '100%' : txStatus === 'failed' ? 'Error' : `${(curIdx + 1) * 20}%`}
           </span>
         </div>
@@ -438,12 +512,12 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                 key={s.key}
                 className={`py-1.5 px-1 rounded-lg text-center text-[10px] font-mono font-semibold transition-all ${
                   isDone
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    ? 'bg-emerald-50 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40'
                     : isActive
-                    ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400 shadow-sm shadow-cyan-500/20 ring-1 ring-cyan-400/40'
+                    ? 'bg-blue-50 text-blue-900 border border-blue-400 shadow-xs dark:bg-cyan-500/25 dark:text-cyan-200 dark:border-cyan-400 dark:shadow-cyan-500/20 ring-1 ring-blue-400/40 dark:ring-cyan-400/40'
                     : isFailed
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                    : 'bg-slate-900 text-slate-500 border border-slate-800'
+                    ? 'bg-rose-50 text-rose-900 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/40'
+                    : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800'
                 }`}
               >
                 <div className="truncate">
@@ -708,7 +782,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
           <button
             type="button"
             onClick={() => onSelect(accountAddress)}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-cyan-400 border border-blue-500/20 transition-colors cursor-pointer"
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-800 dark:text-cyan-400 border border-blue-200 dark:border-blue-500/20 transition-colors cursor-pointer font-medium"
             title="Your raw Lace wallet address"
           >
             <User className="w-3 h-3" />
@@ -739,216 +813,379 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
   };
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-xl shadow-xl">
-      {/* Contract Address & Reset Bar */}
-      <div className="bg-slate-950/90 border-b border-slate-800/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap min-w-0">
-          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">
-            Contract:
-          </span>
-          <span
-            className="font-mono text-xs text-slate-200 truncate max-w-[200px] sm:max-w-xs md:max-w-md bg-slate-900 px-2 py-0.5 rounded border border-slate-800"
-            title={targetContractAddress}
-          >
-            {targetContractAddress}
-          </span>
-          <button
-            type="button"
-            onClick={() => copyContractAddress(targetContractAddress)}
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-            title="Copy Contract Address"
-          >
-            {copiedContractAddr ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-          <a
-            href={getExplorerContractUrl(targetContractAddress)}
-            target="_blank"
-            rel="noreferrer"
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-            title="View on Midnight Explorer"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
-            <span className={`w-1.5 h-1.5 rounded-full ${metadata.isInitialized ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
-            {metadata.isInitialized ? 'Initialized' : 'Uninitialized'}
-          </span>
-        </div>
+    <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-xl shadow-xl">
+      {/* Cockpit Top Gradient Accent Line */}
+      <div className="h-1.5 w-full bg-gradient-to-r from-blue-600 via-indigo-600 via-purple-600 to-emerald-500" />
 
-        {onResetContractState && (
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              type="button"
-              onClick={onResetContractState}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/30 text-xs font-semibold shadow-sm transition-all"
-              title="Reset local contract state / cache (purges cache and re-syncs from on-chain)"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset Cache</span>
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Test Mode Active Caller Switcher Bar */}
-      {mode === 'test' && (
-        <div className="bg-slate-950/80 border-b border-slate-800/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      {/* Lace Mode Active Connected Wallet & Token Balance Bar */}
+      {mode === 'lace' && (
+        <div className="bg-slate-50 dark:bg-slate-950/90 border-b border-slate-200 dark:border-slate-800/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400">
-              <User className="w-4 h-4" />
+            <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-cyan-500/15 text-blue-700 dark:text-cyan-400 border border-blue-200 dark:border-cyan-500/30">
+              <Wallet className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Acting Caller:</span>
+                {isConnected ? (
+                  isWalletLocked ? (
+                    <span className="text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                      <Lock className="w-3 h-3 text-amber-700 dark:text-amber-400" />
+                      Lace Wallet (Locked)
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-green-600 dark:bg-emerald-400 animate-pulse" />
+                      You (Lace Wallet)
+                    </span>
+                  )
+                ) : (
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400 italic">
+                    Not connected
+                  </span>
+                )}
+              </div>
+              {accountAddress && userDerivedAccountHex && (
+                <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                  <span>Owner: <code className="font-mono text-slate-700 dark:text-slate-300">{accountAddress.slice(0, 8)}...{accountAddress.slice(-6)}</code></span>
+                  <span className="text-slate-400 dark:text-slate-600">•</span>
+                  <span>
+                    → Spendable: <code className="font-mono text-blue-800 dark:text-cyan-400 font-semibold">{userDerivedAccountHex.slice(0, 6)}...{userDerivedAccountHex.slice(-4)}</code>
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {isConnected && (
+            <div className="flex items-center gap-3 ml-auto sm:ml-0">
+              <div className="text-right">
+                <div className="text-[10px] text-blue-900 dark:text-cyan-400 font-medium uppercase tracking-wider">
+                  Spendable Balance
+                </div>
+                <div className="text-sm sm:text-base font-black font-mono text-blue-950 dark:text-cyan-300 tracking-tight">
+                  {formatUnits(userBalance, metadata.decimals)} <span className="text-xs text-slate-500 dark:text-slate-400 font-sans font-normal">{metadata.symbol}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Test Mode Active Identity Bar */}
+      {mode === 'test' && (
+        <div className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 flex items-center justify-center font-bold text-xs">
+              {activeIdentity?.name ? activeIdentity.name.slice(0, 2).toUpperCase() : 'ID'}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-medium">Acting Caller:</span>
-                <span className="text-xs font-semibold text-white">
-                  {activeIdentity?.name || 'Alice'}
+                <span className="text-xs font-bold text-slate-900 dark:text-white">{activeIdentity?.name || 'Alice'}</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
+                  Acting Signer
                 </span>
-                {metadata.isInitialized && (
-                  metadata.isCallerOwner ? (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      Owner
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                      {activeIdentity?.label || 'Trader'}
-                    </span>
-                  )
+                {metadata.isInitialized && metadata.isCallerOwner && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                    Contract Owner
+                  </span>
                 )}
               </div>
-              <p className="text-[10px] font-mono text-slate-500">
-                {(accountAddress || PRESET_IDENTITIES[0].addressHex).slice(0, 14)}...{(accountAddress || PRESET_IDENTITIES[0].addressHex).slice(-8)}
-              </p>
+              <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate max-w-xs sm:max-w-md">
+                Spendable: 0x{activeIdentity?.addressHex ? `${activeIdentity.addressHex.slice(0, 10)}...${activeIdentity.addressHex.slice(-8)}` : '---'}
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-slate-400 mr-1">Switch Caller:</span>
-            {PRESET_IDENTITIES.slice(0, 3).map((p) => {
-              const isCurrent = (accountAddress || PRESET_IDENTITIES[0].addressHex).toLowerCase() === p.addressHex.toLowerCase();
-              const isOwner = Boolean(metadata.isInitialized && metadata.owner && p.addressHex.toLowerCase() === metadata.owner.toLowerCase());
-              return (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900/90 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+              {PRESET_IDENTITIES.slice(0, 3).map((id) => (
                 <button
-                  key={p.name}
+                  key={id.name}
                   type="button"
-                  onClick={() => {
-                    selectPresetIdentity(p);
-                    setFormError(null);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
-                    isCurrent
-                      ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-500/20 ring-1 ring-blue-400'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60'
+                  onClick={() => selectPresetIdentity(id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                    activeIdentity?.name === id.name
+                      ? 'bg-indigo-600 text-white font-semibold shadow-xs'
+                      : 'bg-transparent hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                   }`}
+                  title={`Switch to ${id.name}`}
                 >
-                  <span>{p.name}</span>
-                  {metadata.isInitialized && isOwner && (
-                    <span className="text-[9px] text-emerald-300 font-semibold">
-                      (Owner)
-                    </span>
-                  )}
+                  {id.name}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Navigation Tabs */}
-      <div className="flex border-b border-slate-800/80 overflow-x-auto bg-slate-950/40 p-2 gap-1.5 scrollbar-none">
-        <button
-          onClick={() => { setActiveTab('transfer'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'transfer'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Send className="w-3.5 h-3.5" /> Transfer
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('approve'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'approve'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <CheckSquare className="w-3.5 h-3.5" /> Approve Spender
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('transferFrom'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'transferFrom'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Repeat className="w-3.5 h-3.5" /> Transfer From
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('mint'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'mint'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <PlusCircle className="w-3.5 h-3.5" /> Mint Tokens
-          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Owner</span>
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('burn'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'burn'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Flame className="w-3.5 h-3.5" /> Burn Tokens
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('reallocate'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'reallocate'
-              ? 'bg-teal-600 text-white shadow-md shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <RotateCcw className="w-3.5 h-3.5" /> Reallocate / Recover
-          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Owner</span>
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('emergency'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'emergency'
-              ? 'bg-rose-600 text-white shadow-md shadow-rose-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <ShieldAlert className="w-3.5 h-3.5 text-rose-400" /> Emergency
-          {metadata.isPaused && (
-            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-500 text-white animate-pulse">
-              PAUSED
+      {/* Categorized Cockpit Action Navigation */}
+      <div className="border-b border-slate-200 dark:border-slate-800/90 bg-slate-50/90 dark:bg-slate-950/70 p-4 space-y-3.5">
+        {/* Tier 1: 3 High-Impact Category Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          {/* Card 1: Send & Allowances */}
+          <button
+            type="button"
+            onClick={() => handleCategorySwitch('transfers')}
+            className={`group relative p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer flex items-center justify-between ${
+              activeCategory === 'transfers'
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-500 shadow-md shadow-blue-500/25 ring-2 ring-blue-500/30'
+                : 'bg-white dark:bg-slate-900/80 hover:bg-slate-100/90 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-500/40 shadow-xs'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={`p-2 rounded-lg transition-colors ${
+                  activeCategory === 'transfers'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 group-hover:bg-blue-200 dark:group-hover:bg-blue-500/30'
+                }`}
+              >
+                <Send className="w-4 h-4" />
+              </div>
+              <div>
+                <div className={`text-xs font-bold ${activeCategory === 'transfers' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                  Send & Allowances
+                </div>
+                <div className={`text-[11px] ${activeCategory === 'transfers' ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                  Transfer, approve & spend
+                </div>
+              </div>
+            </div>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                activeCategory === 'transfers'
+                  ? 'bg-white/20 text-white border border-white/30'
+                  : 'bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+              }`}
+            >
+              3 circuits
             </span>
-          )}
-        </button>
+          </button>
 
-        <button
-          onClick={() => { setActiveTab('init'); setFormError(null); }}
-          className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'init'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Settings className="w-3.5 h-3.5" /> Deployment Info
-        </button>
+          {/* Card 2: Token Supply */}
+          <button
+            type="button"
+            onClick={() => handleCategorySwitch('supply')}
+            className={`group relative p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer flex items-center justify-between ${
+              activeCategory === 'supply'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-500 shadow-md shadow-emerald-500/25 ring-2 ring-emerald-500/30'
+                : 'bg-white dark:bg-slate-900/80 hover:bg-slate-100/90 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-500/40 shadow-xs'
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0 pr-2">
+              <div
+                className={`p-2 rounded-lg transition-colors flex-shrink-0 ${
+                  activeCategory === 'supply'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 group-hover:bg-emerald-200 dark:group-hover:bg-emerald-500/30'
+                }`}
+              >
+                <Coins className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-xs font-bold ${activeCategory === 'supply' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                    Token Supply
+                  </span>
+                  <Crown className={`w-3 h-3 flex-shrink-0 ${activeCategory === 'supply' ? 'text-amber-200' : 'text-amber-600 dark:text-amber-400'}`} />
+                </div>
+                <div className={`text-[11px] font-mono truncate mt-0.5 ${activeCategory === 'supply' ? 'text-emerald-100' : 'text-slate-700 dark:text-slate-300'}`}>
+                  <span>{formatUnits(metadata.totalSupply, metadata.decimals)} {metadata.symbol}</span>
+                  <span className="opacity-60"> / </span>
+                  <strong className={`font-bold ${activeCategory === 'supply' ? 'text-white' : 'text-slate-950 dark:text-white'}`}>
+                    {isCapped && metadata.maxSupply ? `${formatUnits(metadata.maxSupply, metadata.decimals)}` : 'Uncapped'}
+                  </strong>
+                </div>
+              </div>
+            </div>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                activeCategory === 'supply'
+                  ? 'bg-white/20 text-white border border-white/30'
+                  : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+              }`}
+            >
+              {isCapped && metadata.maxSupply && metadata.maxSupply > 0n
+                ? `${Math.min(100, Math.round((Number(metadata.totalSupply) / Number(metadata.maxSupply)) * 100))}% Cap`
+                : 'Owner'}
+            </span>
+          </button>
+
+          {/* Card 3: Security & Admin */}
+          <button
+            type="button"
+            onClick={() => handleCategorySwitch('admin')}
+            className={`group relative p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer flex items-center justify-between ${
+              activeCategory === 'admin'
+                ? 'bg-gradient-to-r from-rose-600 to-amber-600 text-white border-rose-500 shadow-md shadow-rose-500/25 ring-2 ring-rose-500/30'
+                : 'bg-white dark:bg-slate-900/80 hover:bg-slate-100/90 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:border-rose-300 dark:hover:border-rose-500/40 shadow-xs'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={`p-2 rounded-lg transition-colors ${
+                  activeCategory === 'admin'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400 group-hover:bg-rose-200 dark:group-hover:bg-rose-500/30'
+                }`}
+              >
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-xs font-bold ${activeCategory === 'admin' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                    Security & Admin
+                  </span>
+                  {metadata.isPaused && (
+                    <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping" />
+                  )}
+                </div>
+                <div className={`text-[11px] ${activeCategory === 'admin' ? 'text-rose-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                  Pause, traps & config
+                </div>
+              </div>
+            </div>
+            {metadata.isPaused ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500 text-white animate-pulse border border-rose-400">
+                PAUSED
+              </span>
+            ) : (
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  activeCategory === 'admin'
+                    ? 'bg-white/20 text-white border border-white/30'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                3 circuits
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Tier 2: Sub-Action Toolbar + Live Compact ZK Circuit Indicator */}
+        <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+          {/* Sub-action Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+            {activeCategory === 'transfers' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('transfer')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'transfer'
+                      ? 'bg-blue-600 text-white shadow-xs shadow-blue-500/40 ring-1 ring-blue-500'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <Send className="w-3.5 h-3.5" /> Send Tokens
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('approve')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'approve'
+                      ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-500/40 ring-1 ring-indigo-500'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <CheckSquare className="w-3.5 h-3.5" /> Approve Spender
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('transferFrom')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'transferFrom'
+                      ? 'bg-indigo-700 text-white shadow-xs shadow-indigo-600/40 ring-1 ring-indigo-600'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <Repeat className="w-3.5 h-3.5" /> Use Allowance
+                </button>
+              </>
+            )}
+
+            {activeCategory === 'supply' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('mint')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'mint'
+                      ? 'bg-emerald-600 text-white shadow-xs shadow-emerald-500/40 ring-1 ring-emerald-500'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <PlusCircle className="w-3.5 h-3.5" /> Mint New Tokens
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('burn')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'burn'
+                      ? 'bg-rose-600 text-white shadow-xs shadow-rose-500/40 ring-1 ring-rose-500'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <Flame className="w-3.5 h-3.5" /> Burn Tokens
+                </button>
+              </>
+            )}
+
+            {activeCategory === 'admin' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('emergency')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'emergency'
+                      ? 'bg-rose-600 text-white shadow-xs shadow-rose-500/40 ring-1 ring-rose-500'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" /> Emergency Controls
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('reallocate')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'reallocate'
+                      ? 'bg-teal-700 text-white shadow-xs shadow-teal-600/40 ring-1 ring-teal-600'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Reallocate Trapped
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabSwitch('init')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'init'
+                      ? 'bg-blue-600 text-white shadow-xs shadow-blue-500/40 ring-1 ring-blue-500'
+                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80'
+                  }`}
+                >
+                  <Settings className="w-3.5 h-3.5" /> Contract Setup
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Live Compact ZK Circuit Indicator */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 shadow-xs self-start md:self-auto">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <Zap className="w-3 h-3 text-amber-500" />
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600 dark:text-slate-400">
+                ZK Circuit:
+              </span>
+            </div>
+            <code className="text-xs font-mono font-bold text-blue-900 dark:text-cyan-300 bg-blue-50 dark:bg-cyan-950/50 px-2 py-0.5 rounded border border-blue-200 dark:border-cyan-800/60">
+              {TAB_CIRCUIT_SIGNATURES[activeTab]}
+            </code>
+          </div>
+        </div>
       </div>
 
       {/* Tab Panels */}
@@ -987,9 +1224,9 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         )}
 
         {mode === 'lace' && !isConnected && (
-          <div className="mb-5 p-4 rounded-xl bg-blue-950/40 border border-blue-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-blue-200">
+          <div className="mb-5 p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-blue-900 dark:text-blue-200">
             <div className="flex items-center gap-2">
-              <Wallet className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+              <Wallet className="w-4 h-4 text-blue-700 dark:text-cyan-400 flex-shrink-0" />
               <span>Connect your Lace wallet to sign and submit token transactions on Preprod.</span>
             </div>
             <button
@@ -1005,6 +1242,24 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 1: Transfer */}
         {activeTab === 'transfer' && (
           <form onSubmit={handleTransfer} className="space-y-5">
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800/80 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Send className="w-4 h-4 text-blue-400" />
+                  Send Tokens
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Transfer tokens directly from your spendable balance to another Midnight address.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400">
+                  <span className="text-slate-500">circuit</span> transfer(caller, to, value)
+                </span>
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-slate-300">
@@ -1023,9 +1278,39 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Amount ({metadata.symbol})
-              </label>
+              <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Amount to Transfer ({metadata.symbol})
+                </label>
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-slate-400">Available:</span>
+                  <span className="font-mono text-blue-950 dark:text-cyan-300 font-bold">
+                    {formatUnits(userBalance, metadata.decimals)} {metadata.symbol}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const whole = userBalance / (10n ** BigInt(metadata.decimals));
+                      setTransferAmount(whole.toString());
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-[10px] font-semibold transition-colors cursor-pointer"
+                    title="Set maximum spendable balance"
+                  >
+                    Max
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const half = (userBalance / 2n) / (10n ** BigInt(metadata.decimals));
+                      setTransferAmount(half.toString());
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold transition-colors cursor-pointer"
+                    title="Set 50% of spendable balance"
+                  >
+                    50%
+                  </button>
+                </div>
+              </div>
               <div className="relative">
                 <input
                   type="number"
@@ -1059,6 +1344,24 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 2: Approve */}
         {activeTab === 'approve' && (
           <form onSubmit={handleApprove} className="space-y-5">
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800/80 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <CheckSquare className="w-4 h-4 text-blue-400" />
+                  Approve Spender Allowance
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Authorize a smart contract or third-party address to spend up to a set amount from your account.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400">
+                  <span className="text-slate-500">circuit</span> approve(caller, spender, value)
+                </span>
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-slate-300">
@@ -1113,6 +1416,24 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 3: Transfer From */}
         {activeTab === 'transferFrom' && (
           <form onSubmit={handleTransferFrom} className="space-y-5">
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800/80 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Repeat className="w-4 h-4 text-blue-400" />
+                  Use Delegated Allowance (TransferFrom)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Transfer tokens out of another account that has previously granted you an approved spending allowance.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400">
+                  <span className="text-slate-500">circuit</span> transferFrom(caller, from, to, value)
+                </span>
+              </div>
+            </div>
+
             {/* Live Allowance Check Alert */}
             {fromAccount && getAllowance ? (
               (() => {
@@ -1123,7 +1444,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
                   try {
                     const currentAllowance = getAllowance(cleanFrom, cleanCaller);
                     const divisor = 10n ** BigInt(metadata.decimals);
-                    const formatted = (Number(currentAllowance) / Number(divisor)).toLocaleString();
+                    const formatted = formatBalance(currentAllowance, metadata.decimals);
                     const req = parseFloat(transferFromAmount) || 0;
                     const isSufficient = Number(currentAllowance) / Number(divisor) >= req && req > 0;
 
@@ -1222,31 +1543,97 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 4: Mint */}
         {activeTab === 'mint' && (
           <form onSubmit={handleMint} className="space-y-5">
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>
-                  Circuit: <span className="font-mono text-slate-200">mint(to, value)</span>
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800/80 gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <PlusCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    Mint New Tokens
+                  </h3>
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                    Owner Only
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  Create new tokens and deposit them into any recipient address. Total supply cannot exceed the maximum cap.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                  <span className="text-slate-500">circuit</span> mint(to, value)
                 </span>
               </div>
-              <span className="text-[11px] font-mono flex items-center gap-1.5 text-slate-400">
-                {metadata.isInitialized && metadata.owner ? (
-                  <>
-                    <span>Owner: {metadata.owner.slice(0, 6)}...{metadata.owner.slice(-4)}</span>
-                    {metadata.isCallerOwner ? (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold text-[10px]">
-                        You
-                      </span>
-                    ) : (
-                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-semibold text-[10px]">
-                        Non-Owner
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  'Pending Init'
-                )}
-              </span>
+            </div>
+
+            {/* Supply & Mint Capacity Meter */}
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800/80 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30">
+                    <Coins className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>Supply & Mint Capacity</span>
+                      {isCapped && metadata.maxSupply && metadata.maxSupply > 0n && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                          {Math.min(100, Math.round((Number(metadata.totalSupply) / Number(metadata.maxSupply)) * 100))}% Minted
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono mt-0.5">
+                      Minted: <strong className="text-slate-900 dark:text-white">{formatUnits(metadata.totalSupply, metadata.decimals)}</strong> / {isCapped && metadata.maxSupply ? `${formatUnits(metadata.maxSupply, metadata.decimals)} ${metadata.symbol}` : 'Uncapped'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 self-start sm:self-center">
+                  {isCapped && remainingCap !== null ? (
+                    <div className="text-left sm:text-right">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Remaining Cap</div>
+                      <div className="text-xs font-mono font-bold text-emerald-800 dark:text-emerald-300">
+                        {formatUnits(remainingCap, metadata.decimals)} {metadata.symbol}
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 px-2.5 py-1 rounded-lg bg-slate-200/60 dark:bg-slate-800">
+                      Uncapped Max Supply
+                    </span>
+                  )}
+
+                  {isCapped && remainingCap !== null && remainingCap > 0n && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const divisor = 10n ** BigInt(metadata.decimals);
+                        const whole = remainingCap / divisor;
+                        const frac = remainingCap % divisor;
+                        const formatted = frac === 0n ? whole.toString() : `${whole}.${frac.toString().padStart(metadata.decimals, '0').replace(/0+$/, '')}`;
+                        setMintAmount(formatted);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs cursor-pointer transition-colors whitespace-nowrap"
+                      title="Pre-fill input with all remaining mintable capacity"
+                    >
+                      Max Mintable
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Visual Progress Bar (when capped) */}
+              {isCapped && metadata.maxSupply && metadata.maxSupply > 0n && (
+                <div className="space-y-1 pt-1">
+                  <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${Math.min(100, Math.max(2, Math.round((Number(metadata.totalSupply) / Number(metadata.maxSupply)) * 100)))}%`
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {renderOwnerAuthCard('minting new tokens')}
@@ -1305,22 +1692,63 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 5: Burn */}
         {activeTab === 'burn' && (
           <form onSubmit={handleBurn} className="space-y-5">
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
-              <div className="flex items-center gap-2">
-                <Flame className="w-4 h-4 text-rose-400" />
-                <span>
-                  Circuit: <span className="font-mono text-slate-200">burn(caller, value)</span>
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800/80 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Flame className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                  Burn Tokens
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  Permanently destroy tokens from your spendable balance, reducing circulating supply.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                  <span className="text-slate-500">circuit</span> burn(caller, value)
                 </span>
               </div>
-              <span className="text-[11px] font-mono text-slate-400">
-                Holder-Authorized Circuit
-              </span>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Amount to Burn ({metadata.symbol})
-              </label>
+              <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Amount to Burn ({metadata.symbol})
+                </label>
+                <div className="flex items-center gap-2 text-xs flex-wrap">
+                  <span className="text-slate-500 dark:text-slate-400">Total Minted:</span>
+                  <span className="font-mono text-slate-800 dark:text-slate-200 font-medium">
+                    {formatUnits(metadata.totalSupply, metadata.decimals)} {metadata.symbol}
+                  </span>
+                  <span className="text-slate-300 dark:text-slate-700">•</span>
+                  <span className="text-slate-500 dark:text-slate-400">Available:</span>
+                  <span className="font-mono text-rose-700 dark:text-rose-300 font-bold">
+                    {formatUnits(userBalance, metadata.decimals)} {metadata.symbol}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const whole = userBalance / (10n ** BigInt(metadata.decimals));
+                      setBurnAmount(whole.toString());
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-800 dark:text-rose-300 text-[10px] font-semibold transition-colors cursor-pointer"
+                    title="Set maximum burn amount"
+                  >
+                    Max
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const half = (userBalance / 2n) / (10n ** BigInt(metadata.decimals));
+                      setBurnAmount(half.toString());
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold transition-colors cursor-pointer"
+                    title="Set 50% of spendable balance"
+                  >
+                    50%
+                  </button>
+                </div>
+              </div>
               <div className="relative">
                 <input
                   type="number"
@@ -1354,44 +1782,40 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab: Reallocate / Recover Trapped Tokens */}
         {activeTab === 'reallocate' && (
           <form onSubmit={handleAdminReallocate} className="space-y-5">
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs flex items-center justify-between text-slate-400">
-              <div className="flex items-center gap-2">
-                <RotateCcw className="w-4 h-4 text-teal-400" />
-                <span>
-                  Circuit: <span className="font-mono text-slate-200">adminReallocate(caller, trappedAccount, targetSpendableAccount, amount)</span>
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800/80 gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <RotateCcw className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                    Recover Trapped Tokens
+                  </h3>
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 dark:bg-amber-500/20 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30">
+                    Owner Only
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  Rescue tokens accidentally sent to raw un-hashed Lace wallet addresses and transfer them to spendable accounts.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-[11px] text-slate-700 dark:text-slate-400">
+                  <span className="text-slate-500">circuit</span> adminReallocate(...)
                 </span>
               </div>
-              <span className="text-[11px] font-mono flex items-center gap-1.5 text-slate-400">
-                {metadata.isInitialized && metadata.owner ? (
-                  <>
-                    <span>Owner: {metadata.owner.slice(0, 6)}...{metadata.owner.slice(-4)}</span>
-                    {metadata.isCallerOwner ? (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold text-[10px]">
-                        You
-                      </span>
-                    ) : (
-                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-semibold text-[10px]">
-                        Non-Owner
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  'Pending Init'
-                )}
-              </span>
             </div>
 
             {renderOwnerAuthCard('reallocating trapped tokens')}
 
-            <div className="p-4 rounded-xl bg-teal-500/10 border border-teal-500/30 text-xs text-teal-200 space-y-1.5">
-              <div className="flex items-center gap-2 font-semibold text-teal-300">
-                <ShieldCheck className="w-4 h-4 text-teal-400" />
+            <div className="p-4 rounded-xl bg-teal-50 border border-teal-200 dark:bg-teal-500/10 dark:border-teal-500/30 text-xs space-y-1.5 shadow-xs">
+              <div className="flex items-center gap-2 font-semibold text-teal-900 dark:text-teal-300">
+                <ShieldCheck className="w-4 h-4 text-teal-700 dark:text-teal-400" />
                 <span>Trap Recovery Mechanism (v2.3)</span>
               </div>
-              <p className="text-slate-300 leading-relaxed text-[11px]">
-                Tokens sent directly to an un-hashed raw Lace wallet address reside in <code className="text-white font-mono">_balances[rawAddress]</code> and cannot sign spending circuits because Midnight requires authorization via <code className="text-white font-mono">authenticate(persistentHash([salt, rawAddress]))</code>.
+              <p className="text-slate-700 dark:text-slate-300 leading-relaxed text-[11px]">
+                Tokens sent directly to an un-hashed raw Lace wallet address reside in <code className="text-slate-900 dark:text-white font-mono bg-slate-200/70 dark:bg-slate-900 px-1 py-0.5 rounded">_balances[rawAddress]</code> and cannot sign spending circuits because Midnight requires authorization via <code className="text-slate-900 dark:text-white font-mono bg-slate-200/70 dark:bg-slate-900 px-1 py-0.5 rounded">authenticate(persistentHash([salt, rawAddress]))</code>.
               </p>
-              <p className="text-teal-200/90 leading-relaxed text-[11px]">
+              <p className="text-teal-950 dark:text-teal-200/90 leading-relaxed text-[11px] font-medium">
                 This admin circuit allows the contract owner to rescue trapped balances and transfer them directly into the recipient&apos;s verified spendable account without requiring the trapped address to authenticate.
               </p>
             </div>
@@ -1473,6 +1897,29 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 6: Emergency Controls */}
         {activeTab === 'emergency' && (
           <div className="space-y-8">
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800/80 gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-rose-400" />
+                    Security & Emergency Controls
+                  </h3>
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                    Restricted
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Pause on-chain activity during security incidents, manage pauser privileges, or recover treasury reserves.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400">
+                  <span className="text-slate-500">circuits</span> pause / unpause / withdraw
+                </span>
+              </div>
+            </div>
+
             {renderOwnerAuthCard('emergency actions')}
             {/* Section A: Pause / Unpause Circuit */}
             <div className="p-5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-4">
@@ -1670,6 +2117,24 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
         {/* Tab 7: Initialize (Informative in v2.2) */}
         {activeTab === 'init' && (
           <div className="space-y-5">
+            {/* Action Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800/80 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-blue-400" />
+                  Contract Setup & Genesis Parameters
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Immutable metadata and configuration parameters established during contract deployment.
+                </p>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400">
+                  <span className="text-slate-500">constructor</span> Genesis State
+                </span>
+              </div>
+            </div>
+
             <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-200">
               <div className="flex items-center gap-2 mb-2 font-semibold text-blue-300">
                 <Settings className="w-4 h-4 text-blue-400" />
