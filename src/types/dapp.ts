@@ -6,6 +6,7 @@ export type TransactionStatus =
   | 'idle'
   | 'preparing'
   | 'proving'
+  | 'signing'
   | 'submitting'
   | 'confirmed'
   | 'failed';
@@ -19,6 +20,11 @@ export interface ActivityItem {
   blockHeight?: number;
   timestamp: number;
   error?: string;
+  caller?: string;
+  contractAddress?: string;
+  networkId?: string;
+  mode?: 'lace' | 'test';
+  durationMs?: number;
 }
 
 export interface WalletIdentity {
@@ -31,6 +37,9 @@ export interface WalletIdentity {
 export interface NetworkConfig {
   contractName: string;
   contractAddress: string;
+  contractSalt?: string;
+  ownerSecretKey?: string;
+  owner?: string;
   networkId: string;
   indexerUrl: string;
   indexerWsUrl: string;
@@ -45,8 +54,14 @@ export interface TokenMetadata {
   symbol: string;
   decimals: number;
   totalSupply: bigint;
+  maxSupply?: bigint;
+  contractSalt?: string;
   isInitialized: boolean;
+  isPaused?: boolean;
   owner?: string;
   ownerBech32?: string;
+  emergencyPauser?: string;
+  emergencyPauserBech32?: string;
   isCallerOwner?: boolean;
+  isCallerPauser?: boolean;
 }

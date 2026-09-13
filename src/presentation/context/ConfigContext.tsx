@@ -23,7 +23,7 @@ export interface ConfigContextType {
   isProbing: boolean;
   updateConfig: (newConfig: Partial<NetworkConfig>, preset?: NetworkPreset) => void;
   selectPreset: (preset: NetworkPreset) => void;
-  resetToDefaults: () => void;
+  resetToDefaults: () => Promise<NetworkConfig>;
   runDiagnostics: (overrideConfig?: NetworkConfig) => Promise<Record<string, ServiceDiagnostic>>;
   getExplorerTxUrl: (txHash: string) => string;
   getExplorerContractUrl: (contractAddress?: string) => string;
@@ -35,7 +35,10 @@ export const PRESET_CONFIGS: Record<'preprod' | 'devnet', NetworkConfig> = {
     contractName: deploymentConfig.contractName || 'fungible-token',
     contractAddress:
       deploymentConfig.contractAddress ||
-      '6764022acd5b9fbff2b5baeb84f3082cf51f6d8b2dc978df9778b93c0005983c',
+      '8cefec943e9f715f21f766edb501ea1fb12a9e8a69c4a3281a133cac6b5ee271',
+    contractSalt: (deploymentConfig as any).contractSalt || undefined,
+    ownerSecretKey: (deploymentConfig as any).ownerSecretKey || undefined,
+    owner: (deploymentConfig as any).owner || 'bd536a17777d8b5e9572411c181eb1f355e6ba3e9509eaab4144f1659e54f3df',
     networkId: 'preprod',
     indexerUrl:
       deploymentConfig.indexerUrl ||
@@ -62,7 +65,7 @@ export const PRESET_CONFIGS: Record<'preprod' | 'devnet', NetworkConfig> = {
     contractName: deploymentConfig.contractName || 'fungible-token',
     contractAddress:
       deploymentConfig.contractAddress ||
-      '6764022acd5b9fbff2b5baeb84f3082cf51f6d8b2dc978df9778b93c0005983c',
+      '8cefec943e9f715f21f766edb501ea1fb12a9e8a69c4a3281a133cac6b5ee271',
     networkId: 'devnet',
     indexerUrl: 'http://127.0.0.1:8088/api/v4/graphql',
     indexerWsUrl: 'ws://127.0.0.1:8088/api/v4/graphql/ws',
@@ -84,7 +87,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [diagnostics, setDiagnostics] = useState<Record<string, ServiceDiagnostic>>({});
   const [isProbing, setIsProbing] = useState<boolean>(false);
 
-  // Load configuration override from localStorage on client mount
+  // Load configuration override from localStorage on client mount, and check live deployment from disk
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -98,11 +101,38 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (savedConfig) {
           const parsed = JSON.parse(savedConfig);
           if (parsed && typeof parsed === 'object') {
-            setConfig((prev) => ({ ...prev, ...parsed }));
+            const activeContractAddr =
+              savedPreset !== 'custom' && deploymentConfig.contractAddress
+                ? deploymentConfig.contractAddress
+                : parsed.contractAddress || deploymentConfig.contractAddress;
+            setConfig((prev) => ({ ...prev, ...parsed, contractAddress: activeContractAddr }));
           }
         } else if (savedPreset && savedPreset !== 'custom') {
           setConfig(PRESET_CONFIGS[savedPreset]);
         }
+
+        // Probe /api/deployment dynamically to pick up any changes in deployment.config.json or deployment.json on disk
+        fetch('/api/deployment', { cache: 'no-store' })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.success && data?.deployment) {
+              const d = data.deployment;
+              const liveOverrides: Partial<NetworkConfig> = {};
+              if (d.contractAddress) liveOverrides.contractAddress = d.contractAddress;
+              if (d.contractSalt) liveOverrides.contractSalt = d.contractSalt;
+              if (d.contractName) liveOverrides.contractName = d.contractName;
+              if (d.ownerSecretKey) liveOverrides.ownerSecretKey = d.ownerSecretKey;
+              if (d.owner) liveOverrides.owner = d.owner;
+              if (d.networkId) liveOverrides.networkId = d.networkId;
+
+              Object.assign(PRESET_CONFIGS.preprod, liveOverrides);
+
+              if (savedPreset !== 'custom') {
+                setConfig((prev) => ({ ...prev, ...liveOverrides }));
+              }
+            }
+          })
+          .catch(() => {});
       } catch (e) {
         console.warn('[ConfigContext] Could not restore config from localStorage:', e);
       }
@@ -152,17 +182,47 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
-  // Reset to deployment.config.json defaults
-  const resetToDefaults = useCallback(() => {
-    const defaultConfig = PRESET_CONFIGS.preprod;
-    setPreset('preprod');
-    setConfig(defaultConfig);
+  // Reset to deployment.config.json / deployment.json defaults by fetching latest from /api/deployment
+  const resetToDefaults = useCallback(async (): Promise<NetworkConfig> => {
+    let freshConfig: NetworkConfig = { ...PRESET_CONFIGS.preprod };
+
     if (typeof window !== 'undefined') {
+      try {
+        const res = await fetch('/api/deployment', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.deployment) {
+            const d = data.deployment;
+            freshConfig = {
+              contractName: d.contractName || PRESET_CONFIGS.preprod.contractName,
+              contractAddress: d.contractAddress || PRESET_CONFIGS.preprod.contractAddress,
+              contractSalt: d.contractSalt || (PRESET_CONFIGS.preprod as any).contractSalt,
+              ownerSecretKey: d.ownerSecretKey || (PRESET_CONFIGS.preprod as any).ownerSecretKey,
+              owner: d.owner || (PRESET_CONFIGS.preprod as any).owner,
+              networkId: d.networkId || PRESET_CONFIGS.preprod.networkId,
+              indexerUrl: d.indexerUrl || d.indexer || PRESET_CONFIGS.preprod.indexerUrl,
+              indexerWsUrl: d.indexerWsUrl || d.indexerWS || PRESET_CONFIGS.preprod.indexerWsUrl,
+              nodeUrl: d.nodeUrl || d.nodeRpc || PRESET_CONFIGS.preprod.nodeUrl,
+              proofServerUrl: d.proofServerUrl || d.proofServer || PRESET_CONFIGS.preprod.proofServerUrl,
+              faucetUrl: d.faucetUrl || d.faucet || PRESET_CONFIGS.preprod.faucetUrl,
+              explorerUrl: d.explorerUrl || d.explorer || PRESET_CONFIGS.preprod.explorerUrl,
+            };
+            Object.assign(PRESET_CONFIGS.preprod, freshConfig);
+          }
+        }
+      } catch (e) {
+        console.warn('[ConfigContext] Failed fetching from /api/deployment during reset:', e);
+      }
+
       try {
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(PRESET_KEY);
       } catch {}
     }
+
+    setPreset('preprod');
+    setConfig(freshConfig);
+    return freshConfig;
   }, []);
 
   // Probe services for live latency and availability

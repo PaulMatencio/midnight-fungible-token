@@ -2,8 +2,11 @@ import type { NetworkConfig } from '../../types/dapp';
 import deploymentConfig from '../../../deployment.config.json';
 
 export const MIDNIGHT_CONFIG: NetworkConfig = {
-  contractName: deploymentConfig.contractName || 'fungible-token',
-  contractAddress: deploymentConfig.contractAddress || '6764022acd5b9fbff2b5baeb84f3082cf51f6d8b2dc978df9778b93c0005983c',
+  contractName: deploymentConfig.contractName || 'fungible-token-v2-3',
+  contractAddress: deploymentConfig.contractAddress || '1f671d56337df583a799cc8657098a1601272e63b89ca706c6894fb8c8e8714b',
+  contractSalt: (deploymentConfig as any).contractSalt || '7fed14431887b8ced99266d0d95e16bffb1e042268aa3dbfcd19b5b807fbdb64',
+  ownerSecretKey: (deploymentConfig as any).ownerSecretKey || undefined,
+  owner: (deploymentConfig as any).owner || "a3c24122f1bc023501cbe0edd21a99e2ac09a8072ab3693a450b0689549e5998",
   networkId: deploymentConfig.networkId || 'preprod',
   indexerUrl: deploymentConfig.indexerUrl || deploymentConfig.indexer || 'https://indexer.preprod.midnight.network/api/v4/graphql',
   indexerWsUrl: deploymentConfig.indexerWsUrl || deploymentConfig.indexerWS || 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',

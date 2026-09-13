@@ -14,6 +14,12 @@ import {
 } from '../infrastructure/midnight/midnight-dapp-connector';
 import { MIDNIGHT_CONFIG } from '../infrastructure/config/midnight-config';
 import type { WalletIdentity } from '../types/dapp';
+import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+
+// Ensure Midnight network ID is globally initialized
+try {
+  setNetworkId(MIDNIGHT_CONFIG.networkId as any);
+} catch {}
 
 export interface MidnightWalletProvider {
   getCoinPublicKey: () => string;
@@ -39,6 +45,7 @@ export interface ProviderOptions {
   zkirBaseUrl?: string;
   indexerUrl?: string;
   indexerWsUrl?: string;
+  nodeUrl?: string;
 }
 
 function resolveZkirUrl(customUrl?: string): string {
@@ -60,6 +67,7 @@ export function createLaceMidnightProviders(
   const proofServerUrl = options?.proofServerUrl || MIDNIGHT_CONFIG.proofServerUrl;
   const indexerUrl = options?.indexerUrl || MIDNIGHT_CONFIG.indexerUrl;
   const indexerWsUrl = options?.indexerWsUrl || MIDNIGHT_CONFIG.indexerWsUrl;
+  const nodeRpcUrl = options?.nodeUrl || MIDNIGHT_CONFIG.nodeUrl;
 
   const zkConfigProvider = new FetchZkConfigProvider<string>(zkirBaseUrl, fetch.bind(globalThis));
   const publicDataProvider = indexerPublicDataProvider(indexerUrl, indexerWsUrl);
@@ -67,7 +75,7 @@ export function createLaceMidnightProviders(
   const privateStateProvider = new BrowserPrivateStateProvider('midnight_lace_state_');
 
   const walletProvider = createLaceWalletProvider(extensionApi);
-  const midnightProvider = createLaceMidnightProvider(extensionApi);
+  const midnightProvider = createLaceMidnightProvider(extensionApi, nodeRpcUrl);
 
   return {
     walletProvider,

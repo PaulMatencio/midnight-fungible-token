@@ -15,6 +15,7 @@ import { ActivityLog } from '@/src/presentation/components/ActivityLog';
 import { useFungibleToken } from '@/src/presentation/hooks/useFungibleToken';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useConfig } from '@/src/presentation/context/ConfigContext';
+import { MIDNIGHT_CONFIG } from '@/src/infrastructure/config/midnight-config';
 import {
   ShieldCheck,
   Info,
@@ -79,13 +80,23 @@ export default function HomePage() {
     transferFrom,
     mint,
     burn,
+    pause,
+    unpause,
+    setEmergencyPauser,
+    emergencyWithdraw,
+    adminReallocate,
     getBalanceOf,
+    getRawLockedBalanceOf,
     getAllowance,
     resetContractCache,
+    clearActivityLog,
+    activeActionName,
+    dismissTxStatus,
   } = useFungibleToken();
 
-  // Current connected user's token balance
+  // Current connected user's spendable and locked token balance
   const userBalance = accountAddress ? getBalanceOf(accountAddress) : 0n;
+  const lockedRawBalance = accountAddress ? getRawLockedBalanceOf(accountAddress) : 0n;
 
   return (
     <div className="min-h-screen flex bg-slate-950 text-slate-100 selection:bg-blue-600 selection:text-white">
@@ -382,6 +393,8 @@ export default function HomePage() {
             statusMessage={statusMessage}
             txHash={currentTxHash}
             blockHeight={currentBlock}
+            actionName={activeActionName}
+            onDismiss={dismissTxStatus}
           />
 
           {/* Tab 1: Interactive Circuit Actions */}
@@ -391,6 +404,7 @@ export default function HomePage() {
                 contractAddress={config.contractAddress}
                 metadata={metadata}
                 userBalance={userBalance}
+                lockedRawBalance={lockedRawBalance}
                 infraStatus={infraStatus}
                 onResetContractState={resetContractCache}
               />
@@ -415,6 +429,10 @@ export default function HomePage() {
                 onResetContractState={resetContractCache}
                 metadata={metadata}
                 txStatus={txStatus}
+                statusMessage={statusMessage}
+                currentTxHash={currentTxHash}
+                currentBlock={currentBlock}
+                activeActionName={activeActionName}
                 callerAddress={accountAddress}
                 getAllowance={getAllowance}
                 onTransfer={transfer}
@@ -423,6 +441,11 @@ export default function HomePage() {
                 onMint={mint}
                 onBurn={burn}
                 onInitialize={initialize}
+                onPause={pause}
+                onUnpause={unpause}
+                onSetEmergencyPauser={setEmergencyPauser}
+                onEmergencyWithdraw={emergencyWithdraw}
+                onAdminReallocate={adminReallocate}
               />
             </div>
           )}
@@ -443,6 +466,7 @@ export default function HomePage() {
                 contractAddress={config.contractAddress}
                 metadata={metadata}
                 userBalance={userBalance}
+                lockedRawBalance={lockedRawBalance}
                 infraStatus={infraStatus}
                 onResetContractState={resetContractCache}
               />
@@ -479,7 +503,11 @@ export default function HomePage() {
                 </span>
               </div>
 
-              <ActivityLog activities={activityLog} />
+              <ActivityLog
+                activities={activityLog}
+                activeContractAddress={config?.contractAddress || MIDNIGHT_CONFIG.contractAddress}
+                onClearActivities={clearActivityLog}
+              />
             </div>
           )}
 

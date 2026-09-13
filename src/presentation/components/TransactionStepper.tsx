@@ -1,8 +1,22 @@
 'use client';
 
-import React from 'react';
-import { Loader2, CheckCircle2, Shield, Send, Check, ExternalLink, AlertCircle } from 'lucide-react';
-import { MIDNIGHT_CONFIG, getExplorerTxUrl } from '@/src/infrastructure/config/midnight-config';
+import React, { useEffect, useState } from 'react';
+import {
+  Loader2,
+  CheckCircle2,
+  ShieldCheck,
+  Radio,
+  ExternalLink,
+  AlertCircle,
+  Clock,
+  FileCode2,
+  KeyRound,
+  Check,
+  X,
+  Copy,
+  Sparkles,
+} from 'lucide-react';
+import { getExplorerTxUrl } from '@/src/infrastructure/config/midnight-config';
 import type { TransactionStatus } from '@/src/types/dapp';
 
 interface TransactionStepperProps {
@@ -10,6 +24,8 @@ interface TransactionStepperProps {
   statusMessage: string;
   txHash: string | null;
   blockHeight: number | null;
+  actionName?: string | null;
+  onDismiss?: () => void;
 }
 
 export const TransactionStepper: React.FC<TransactionStepperProps> = ({
@@ -17,25 +33,99 @@ export const TransactionStepper: React.FC<TransactionStepperProps> = ({
   statusMessage,
   txHash,
   blockHeight,
+  actionName,
+  onDismiss,
 }) => {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [copiedTxHash, setCopiedTxHash] = useState(false);
+
+  // Timer tracking active transaction duration
+  useEffect(() => {
+    if (status === 'idle') {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    if (status === 'confirmed' || status === 'failed') {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [status]);
+
   if (status === 'idle') return null;
 
   const steps = [
-    { key: 'preparing', label: 'Preparing Transaction', subtext: 'Balancing DUST fee & inputs' },
-    { key: 'proving', label: 'Zero-Knowledge Proof', subtext: 'Generating PLONK circuit proof' },
-    { key: 'submitting', label: 'Submitting Extrinsic', subtext: 'Broadcasting to Midnight node' },
-    { key: 'confirmed', label: 'Block Finalization', subtext: blockHeight ? `Block #${blockHeight}` : 'State transition confirmed' },
+    {
+      key: 'preparing',
+      stepNum: 1,
+      label: 'Building Transaction',
+      subtext: 'Witness resolution & Compact circuit intent',
+      icon: FileCode2,
+    },
+    {
+      key: 'proving',
+      stepNum: 2,
+      label: 'Zero-Knowledge Proof',
+      subtext: 'Generating PLONK proof via Proof Server',
+      icon: ShieldCheck,
+    },
+    {
+      key: 'signing',
+      stepNum: 3,
+      label: 'Wallet Signature',
+      subtext: 'Lace fee balancing & transaction authorization',
+      icon: KeyRound,
+    },
+    {
+      key: 'submitting',
+      stepNum: 4,
+      label: 'Submitting Extrinsic',
+      subtext: 'Broadcasting signed transaction to Midnight node',
+      icon: Radio,
+    },
+    {
+      key: 'confirmed',
+      stepNum: 5,
+      label: 'Committed On-Chain',
+      subtext: blockHeight
+        ? `Consensus verified in Block #${blockHeight}`
+        : 'State transition confirmed on-chain',
+      icon: CheckCircle2,
+    },
   ];
 
+  const order: TransactionStatus[] = ['preparing', 'proving', 'signing', 'submitting', 'confirmed'];
+  const currentIndex = order.indexOf(status);
+
+  // Calculate percentage of lifecycle completion
+  const getProgressPercent = () => {
+    if (status === 'failed') {
+      return Math.max(10, (currentIndex + 1) * 20);
+    }
+    if (status === 'confirmed') return 100;
+    if (currentIndex >= 0) {
+      return (currentIndex + 1) * 20;
+    }
+    return 10;
+  };
+
   const getStepState = (stepKey: string) => {
-    const order = ['preparing', 'proving', 'submitting', 'confirmed'];
-    const currentIndex = order.indexOf(status);
-    const stepIndex = order.indexOf(stepKey);
+    const stepIndex = order.indexOf(stepKey as TransactionStatus);
 
     if (status === 'failed') {
-      return 'failed';
+      if (stepIndex === currentIndex) return 'failed';
+      if (stepIndex < currentIndex) return 'done';
+      return 'pending';
     }
-    if (stepIndex < currentIndex || status === 'confirmed') {
+    if (status === 'confirmed') {
+      return 'done';
+    }
+    if (stepIndex < currentIndex) {
       return 'done';
     }
     if (stepIndex === currentIndex) {
@@ -44,71 +134,248 @@ export const TransactionStepper: React.FC<TransactionStepperProps> = ({
     return 'pending';
   };
 
+  const formatTime = (secs: number) => {
+    const mins = Math.floor(secs / 60);
+    const remaining = secs % 60;
+    return `${mins.toString().padStart(2, '0')}:${remaining.toString().padStart(2, '0')}`;
+  };
+
+  const copyHash = (hash: string) => {
+    navigator.clipboard.writeText(hash);
+    setCopiedTxHash(true);
+    setTimeout(() => setCopiedTxHash(false), 2000);
+  };
+
+  const displayActionTitle = actionName
+    ? `${actionName.toUpperCase()} Transaction Lifecycle`
+    : 'Midnight Transaction Lifecycle';
+
   return (
-    <div className="bg-slate-900/90 border border-slate-700/80 rounded-2xl p-6 backdrop-blur-2xl shadow-2xl animate-in fade-in slide-in-from-top-4">
-      {/* Title */}
-      <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
-            <Shield className="w-5 h-5" />
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-slate-900/95 via-slate-900/90 to-slate-950/95 border border-cyan-500/30 p-5 sm:p-6 backdrop-blur-2xl shadow-2xl shadow-cyan-950/30 animate-in fade-in slide-in-from-top-4 duration-300">
+      {/* Background Decorative Glow */}
+      <div className="absolute -top-24 -right-24 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Top Header Row */}
+      <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-800">
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div className="p-2.5 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 text-cyan-400 shadow-inner flex-shrink-0 mt-0.5 sm:mt-0">
+            {status === 'confirmed' ? (
+              <Sparkles className="w-5 h-5 text-emerald-400" />
+            ) : status === 'failed' ? (
+              <AlertCircle className="w-5 h-5 text-rose-400" />
+            ) : (
+              <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+            )}
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-white">Midnight Transaction Lifecycle</h3>
-            <p className="text-xs text-slate-400">{statusMessage}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                {displayActionTitle}
+              </h3>
+              {actionName && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 uppercase">
+                  Circuit: {actionName}
+                </span>
+              )}
+              {status === 'confirmed' && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Committed On-Chain
+                </span>
+              )}
+              {status === 'failed' && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  Execution Stopped
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-300 mt-1 flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+              <span>{statusMessage || 'Processing transaction...'}</span>
+            </p>
           </div>
         </div>
 
-        {txHash && (
-          <a
-            href={getExplorerTxUrl(txHash)}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-mono text-blue-400 transition-colors"
-          >
-            <span>{txHash.slice(0, 10)}...</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        )}
+        {/* Right Info Details: Timer, Tx Hash, Dismiss Button */}
+        <div className="flex items-center gap-2 self-start md:self-center flex-wrap">
+          {/* Elapsed Duration Pill */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs font-mono text-slate-300 shadow-sm">
+            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{formatTime(elapsedSeconds)}</span>
+          </div>
+
+          {/* On-Chain Block Height Badge */}
+          {blockHeight && (
+            <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono text-emerald-300 font-semibold shadow-sm">
+              <span>Block #{blockHeight}</span>
+            </div>
+          )}
+
+          {/* Transaction Explorer Link */}
+          {txHash && (
+            <div className="flex items-center gap-1">
+              <a
+                href={getExplorerTxUrl(txHash)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono text-cyan-400 hover:text-cyan-300 transition-colors shadow-sm"
+                title="View in Midnight Block Explorer"
+              >
+                <span>{txHash.slice(0, 10)}...</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+              <button
+                onClick={() => copyHash(txHash)}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors"
+                title="Copy Transaction Hash"
+              >
+                {copiedTxHash ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          )}
+
+          {/* Dismiss Button */}
+          {onDismiss && (status === 'confirmed' || status === 'failed') && (
+            <button
+              onClick={onDismiss}
+              className="p-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors"
+              title="Dismiss status banner"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* 4 Steps */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        {steps.map((s, idx) => {
+      {/* Progress Bar Track */}
+      <div className="mt-4 mb-5">
+        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+          <span>
+            {status === 'confirmed'
+              ? 'All 5 Steps Completed Successfully'
+              : `Step ${Math.min(5, Math.max(1, currentIndex + 1))} of 5 in progress`}
+          </span>
+          <span className="font-semibold text-cyan-400">{getProgressPercent()}%</span>
+        </div>
+        <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden relative">
+          <div
+            className={`h-full transition-all duration-500 ease-out rounded-full ${
+              status === 'confirmed'
+                ? 'bg-gradient-to-r from-cyan-400 via-teal-400 to-emerald-400'
+                : status === 'failed'
+                ? 'bg-gradient-to-r from-cyan-400 to-rose-500'
+                : 'bg-gradient-to-r from-blue-500 via-cyan-400 to-teal-400'
+            }`}
+            style={{ width: `${getProgressPercent()}%` }}
+          />
+        </div>
+      </div>
+
+      {/* 5 Distinct Transaction Steps */}
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+        {steps.map((s) => {
           const state = getStepState(s.key);
+          const StepIcon = s.icon;
+
           return (
             <div
               key={s.key}
-              className={`p-3.5 rounded-xl border transition-all ${
+              className={`relative rounded-xl p-3.5 border transition-all duration-300 flex flex-col justify-between ${
                 state === 'active'
-                  ? 'bg-blue-950/40 border-blue-500/60 shadow-lg shadow-blue-500/10 ring-1 ring-blue-500/30'
+                  ? 'bg-gradient-to-b from-cyan-950/60 to-blue-950/40 border-cyan-400/80 shadow-lg shadow-cyan-500/15 ring-2 ring-cyan-400/30'
                   : state === 'done'
-                  ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                  ? 'bg-emerald-950/25 border-emerald-500/40 text-emerald-200'
                   : state === 'failed'
-                  ? 'bg-rose-950/20 border-rose-500/40 text-rose-300'
-                  : 'bg-slate-950/40 border-slate-800/80 opacity-50'
+                  ? 'bg-rose-950/30 border-rose-500/60 text-rose-200'
+                  : 'bg-slate-950/40 border-slate-800/80 opacity-60 text-slate-400'
               }`}
             >
-              <div className="flex items-center gap-2 mb-1.5">
-                {state === 'done' && (
-                  <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                    <Check className="w-3.5 h-3.5" />
+              {/* Step Header */}
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
+                      state === 'active'
+                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/30'
+                        : state === 'done'
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        : state === 'failed'
+                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                        : 'bg-slate-800 text-slate-500 font-mono'
+                    }`}
+                  >
+                    {state === 'done' ? (
+                      <Check className="w-4 h-4 stroke-[3]" />
+                    ) : state === 'failed' ? (
+                      <X className="w-4 h-4" />
+                    ) : state === 'active' ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                    ) : (
+                      s.stepNum
+                    )}
                   </div>
-                )}
-                {state === 'active' && (
-                  <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
-                )}
-                {state === 'pending' && (
-                  <div className="w-5 h-5 rounded-full bg-slate-800 text-slate-500 text-xs font-mono flex items-center justify-center">
-                    {idx + 1}
-                  </div>
-                )}
-                {state === 'failed' && (
-                  <AlertCircle className="w-5 h-5 text-rose-400" />
-                )}
 
-                <h4 className="text-xs font-semibold text-white truncate">{s.label}</h4>
+                  <span
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      state === 'active'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse'
+                        : state === 'done'
+                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                        : state === 'failed'
+                        ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                        : 'bg-slate-800/60 text-slate-500'
+                    }`}
+                  >
+                    {state === 'active'
+                      ? 'In Progress'
+                      : state === 'done'
+                      ? 'Completed'
+                      : state === 'failed'
+                      ? 'Failed'
+                      : 'Pending'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 mb-1">
+                  <StepIcon
+                    className={`w-3.5 h-3.5 flex-shrink-0 ${
+                      state === 'active'
+                        ? 'text-cyan-400'
+                        : state === 'done'
+                        ? 'text-emerald-400'
+                        : state === 'failed'
+                        ? 'text-rose-400'
+                        : 'text-slate-500'
+                    }`}
+                  />
+                  <h4
+                    className={`text-xs font-bold truncate ${
+                      state === 'active'
+                        ? 'text-white'
+                        : state === 'done'
+                        ? 'text-emerald-100'
+                        : state === 'failed'
+                        ? 'text-rose-100'
+                        : 'text-slate-400'
+                    }`}
+                  >
+                    {s.label}
+                  </h4>
+                </div>
+
+                <p className="text-[11px] text-slate-400 leading-snug">{s.subtext}</p>
               </div>
-              <p className="text-[11px] text-slate-400">{s.subtext}</p>
+
+              {/* Active Pulsing Indicator Line */}
+              {state === 'active' && (
+                <div className="mt-3 pt-2 border-t border-cyan-500/30 flex items-center justify-between text-[10px] font-mono text-cyan-300">
+                  <span className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                    Executing...
+                  </span>
+                  <span>{formatTime(elapsedSeconds)}</span>
+                </div>
+              )}
             </div>
           );
         })}

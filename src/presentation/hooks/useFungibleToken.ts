@@ -8,7 +8,9 @@ import {
   type FungibleTokenLedgerState,
   type FungibleTokenPrivateState,
 } from '@/src/client/fungible-token-sdk';
-import { ledger } from '@/src/contracts/fungible-token/contract/index.js';
+import { ledger, Contract } from '@/src/contracts/fungible-token/contract/index.js';
+import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
+import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useToast } from '@/src/presentation/context/ToastContext';
 import { useConfig } from '@/src/presentation/context/ConfigContext';
@@ -21,10 +23,13 @@ import {
 } from '@/src/providers/midnight-providers';
 import { isWalletLockedError, isChannelShutdownError } from '@/src/infrastructure/midnight/midnight-dapp-connector';
 import type { ActivityItem, TokenMetadata, TransactionStatus } from '@/src/types/dapp';
+import { ContractState } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
 import {
   queryIndexerContractState,
   calculateAccountSharesFromLedger,
   formatBech32Address,
+  CONTRACT_ACTION_QUERY,
+  toByteArray,
   type IndexerTokenReport,
 } from '@/src/infrastructure/midnight/midnight-indexer-client';
 
@@ -119,9 +124,96 @@ function generateTxHash(): string {
   return '0x' + bytesToHex(arr);
 }
 
+export function extractDetailedErrorMessage(err: any): string {
+  if (!err) return 'Transaction failed';
+  const messages: string[] = [];
+  let curr = err;
+  let depth = 0;
+  while (curr && depth < 5) {
+    if (typeof curr === 'string') {
+      messages.push(curr);
+      break;
+    }
+    if (curr.info && typeof curr.info === 'string') {
+      messages.push(curr.info);
+    }
+    if (curr.reason && typeof curr.reason === 'string') {
+      messages.push(curr.reason);
+    }
+    if (curr.description && typeof curr.description === 'string') {
+      messages.push(curr.description);
+    }
+    if (curr.message && typeof curr.message === 'string' && curr.message !== 'Error') {
+      messages.push(curr.message);
+    }
+    if (curr.code !== undefined && curr.code !== null) {
+      if (curr.code === 2) {
+        messages.push('Transaction was declined or cancelled in Lace wallet.');
+      } else if (curr.code === 1) {
+        messages.push('Lace wallet rejected the transaction request.');
+      }
+    }
+    curr = curr.cause;
+    depth++;
+  }
+
+  const cleaned = messages
+    .map((m) => m.replace(/^Unexpected error (submitting|executing) scoped transaction '<[^>]+>':\s*/i, '').trim())
+    .filter((m) => m && m !== 'Error');
+
+  if (cleaned.length > 0) {
+    return cleaned[0];
+  }
+  const fallback = err?.message || err?.reason;
+  if (fallback && fallback !== 'Error') return fallback;
+  return 'Lace wallet transaction submission failed or was declined. Please verify that your Lace wallet is unlocked, has sufficient DUST balance, and that you confirmed the popup in Lace.';
+}
+
 const LACE_STORAGE_KEY_PREFIX = 'midnight_fungible_token_lace_state_';
 const ACTIVITY_STORAGE_KEY_PREFIX = 'midnight_fungible_token_activity_';
+const MASTER_AUDIT_LOG_KEY = 'midnight_fungible_token_audit_log_master_v2';
 const TOKEN_META_KEY_PREFIX = 'midnight_fungible_token_meta_';
+const MAX_PERSISTED_ACTIVITIES = 500;
+
+export function loadPersistentActivities(contractAddress: string): ActivityItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const masterJson = localStorage.getItem(MASTER_AUDIT_LOG_KEY);
+    const contractJson = contractAddress ? localStorage.getItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${contractAddress}`) : null;
+    const masterItems: ActivityItem[] = masterJson ? JSON.parse(masterJson) : [];
+    const contractItems: ActivityItem[] = contractJson ? JSON.parse(contractJson) : [];
+
+    const itemMap = new Map<string, ActivityItem>();
+    [...masterItems, ...contractItems].forEach((item) => {
+      if (item && item.id) {
+        const existing = itemMap.get(item.id);
+        if (!existing || (item.status === 'confirmed' && existing.status !== 'confirmed')) {
+          itemMap.set(item.id, item);
+        }
+      }
+    });
+
+    return Array.from(itemMap.values())
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .slice(0, MAX_PERSISTED_ACTIVITIES);
+  } catch (err) {
+    console.warn('[useFungibleToken] Error loading persistent activities:', err);
+    return [];
+  }
+}
+
+export function savePersistentActivities(items: ActivityItem[], contractAddress?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const trimmed = items.slice(0, MAX_PERSISTED_ACTIVITIES);
+    localStorage.setItem(MASTER_AUDIT_LOG_KEY, JSON.stringify(trimmed));
+    if (contractAddress) {
+      localStorage.setItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${contractAddress}`, JSON.stringify(trimmed));
+    }
+  } catch (err) {
+    console.warn('[useFungibleToken] Error persisting activities:', err);
+  }
+}
 
 export function serializeChargedState(chargedState: any): string {
   if (!chargedState || !chargedState.state) return '';
@@ -154,12 +246,29 @@ export function deserializeChargedState(jsonStr: string): any {
 
 /**
  * Extracts comprehensive TokenMetadata from decoded ledger state,
- * computing owner hex, owner Bech32m, and whether caller is the contract owner.
+ * computing owner hex, owner Bech32m, pause status, maxSupply, and caller permissions.
  */
+
+export function createConfiguredClient(defaultSalt?: Uint8Array): FungibleTokenClient {
+  return new FungibleTokenClient({
+    localSecretKey: (ctx) => {
+      const ps = ctx.privateState as FungibleTokenPrivateState;
+      const sk =
+        ps?.secretKey ||
+        ps?.currentSecretKey ||
+        ps?.signingKey ||
+        new Uint8Array(32).fill(1);
+      return [ctx.privateState, FungibleTokenClient.toBytes32(sk)];
+    },
+  }, defaultSalt);
+}
+
 export function extractMetadata(
   decoded: FungibleTokenLedgerState | any | null,
   currentCaller?: string | null,
-  networkId: string = MIDNIGHT_CONFIG.networkId
+  networkId: string = MIDNIGHT_CONFIG.networkId,
+  contractSaltOrAddress?: string | Uint8Array,
+  customOwnerKey?: string | Uint8Array
 ): TokenMetadata {
   if (!decoded) {
     return {
@@ -167,10 +276,16 @@ export function extractMetadata(
       symbol: 'MFT',
       decimals: 6,
       totalSupply: 0n,
+      maxSupply: 0n,
+      contractSalt: undefined,
       isInitialized: false,
+      isPaused: false,
       owner: undefined,
       ownerBech32: undefined,
+      emergencyPauser: undefined,
+      emergencyPauserBech32: undefined,
       isCallerOwner: false,
+      isCallerPauser: false,
     };
   }
 
@@ -178,12 +293,71 @@ export function extractMetadata(
   const ownerHex = ownerBytes && ownerBytes.length === 32 ? bytesToHex(ownerBytes) : undefined;
   const ownerBech32 = ownerBytes && ownerBytes.length === 32 ? formatBech32Address(ownerBytes, networkId) : undefined;
 
-  const isInit = Boolean(decoded._isInitialized);
+  const saltBytes = decoded._contractSalt as Uint8Array | undefined;
+  const contractSaltHex = saltBytes && saltBytes.length === 32
+    ? bytesToHex(saltBytes)
+    : typeof contractSaltOrAddress === 'string' && contractSaltOrAddress.length === 64
+    ? contractSaltOrAddress
+    : contractSaltOrAddress instanceof Uint8Array && contractSaltOrAddress.length === 32
+    ? bytesToHex(contractSaltOrAddress)
+    : undefined;
+
+  const pauserBytes = decoded._emergencyPauser as Uint8Array | undefined;
+  const emergencyPauserHex = pauserBytes && pauserBytes.length === 32 ? bytesToHex(pauserBytes) : ownerHex;
+  const emergencyPauserBech32 = pauserBytes && pauserBytes.length === 32
+    ? formatBech32Address(pauserBytes, networkId)
+    : ownerBech32;
+
+  // In v2.2, contract is initialized upon construction
+  const isInit = decoded._isInitialized !== undefined
+    ? Boolean(decoded._isInitialized)
+    : Boolean(ownerHex || decoded._name || decoded._symbol || saltBytes);
 
   let isCallerOwner = false;
-  if (isInit && ownerHex && currentCaller) {
-    const callerCleanHex = addressToHex32(currentCaller).toLowerCase();
-    isCallerOwner = callerCleanHex === ownerHex.toLowerCase();
+  let isCallerPauser = false;
+  if (isInit) {
+    const effectiveSalt = saltBytes || (contractSaltOrAddress ? (typeof contractSaltOrAddress === 'string' ? hexToBytes(contractSaltOrAddress) : contractSaltOrAddress) : new Uint8Array(32).fill(42));
+
+    // Check if custom or stored owner secret key derives to ownerHex
+    if (ownerHex) {
+      let candidateKey = customOwnerKey ? (typeof customOwnerKey === 'string' ? customOwnerKey : bytesToHex(customOwnerKey)) : null;
+      if (!candidateKey && typeof window !== 'undefined') {
+        const addrKey = typeof contractSaltOrAddress === 'string' && contractSaltOrAddress.length === 64 ? contractSaltOrAddress : '';
+        candidateKey = (addrKey ? localStorage.getItem(`midnight_owner_sk_${addrKey}`) : null) ||
+          localStorage.getItem(`midnight_owner_sk_${MIDNIGHT_CONFIG.contractAddress}`) ||
+          (MIDNIGHT_CONFIG as any).ownerSecretKey || null;
+      }
+      if (candidateKey) {
+        try {
+          const derived = bytesToHex(FungibleTokenClient.deriveAccount(hexToBytes(candidateKey), effectiveSalt)).toLowerCase();
+          if (derived === ownerHex.toLowerCase()) {
+            isCallerOwner = true;
+            isCallerPauser = true;
+          }
+        } catch {}
+      }
+    }
+
+    if (!isCallerOwner && currentCaller) {
+      const callerCleanHex = addressToHex32(currentCaller).toLowerCase();
+      let callerDerivedHex: string | undefined;
+      try {
+        const callerBytes = hexToBytes(currentCaller);
+        callerDerivedHex = bytesToHex(FungibleTokenClient.deriveAccount(callerBytes, effectiveSalt)).toLowerCase();
+      } catch {}
+
+      if (ownerHex) {
+        isCallerOwner =
+          callerCleanHex === ownerHex.toLowerCase() ||
+          Boolean(callerDerivedHex && callerDerivedHex === ownerHex.toLowerCase());
+      }
+      if (emergencyPauserHex) {
+        isCallerPauser =
+          isCallerOwner ||
+          callerCleanHex === emergencyPauserHex.toLowerCase() ||
+          Boolean(callerDerivedHex && callerDerivedHex === emergencyPauserHex.toLowerCase());
+      }
+    }
   }
 
   return {
@@ -191,10 +365,16 @@ export function extractMetadata(
     symbol: decoded._symbol || (isInit ? 'MFT' : '---'),
     decimals: Number(decoded._decimals !== undefined ? decoded._decimals : 0n),
     totalSupply: decoded._totalSupply || 0n,
+    maxSupply: decoded._maxSupply !== undefined ? decoded._maxSupply : 0n,
+    contractSalt: contractSaltHex,
     isInitialized: isInit,
+    isPaused: Boolean(decoded._paused),
     owner: isInit ? ownerHex : undefined,
     ownerBech32: isInit ? ownerBech32 : undefined,
+    emergencyPauser: isInit ? emergencyPauserHex : undefined,
+    emergencyPauserBech32: isInit ? emergencyPauserBech32 : undefined,
     isCallerOwner,
+    isCallerPauser,
   };
 }
 
@@ -218,7 +398,14 @@ export function useFungibleToken() {
   const [currentTxHash, setCurrentTxHash] = useState<string | null>(null);
   const [currentBlock, setCurrentBlock] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [activeActionName, setActiveActionName] = useState<string | null>(null);
   const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
+
+  const dismissTxStatus = useCallback(() => {
+    setTxStatus('idle');
+    setStatusMessage('');
+    setActiveActionName(null);
+  }, []);
   const [infraStatus, setInfraStatus] = useState<{ proofServer: boolean; indexer: boolean }>({
     proofServer: false,
     indexer: false,
@@ -227,9 +414,10 @@ export function useFungibleToken() {
   const [isQueryingIndexer, setIsQueryingIndexer] = useState<boolean>(false);
 
   // Client and runtime context refs
-  const clientRef = useRef<FungibleTokenClient>(new FungibleTokenClient({}));
+  const clientRef = useRef<FungibleTokenClient>(createConfiguredClient());
   const privateStateRef = useRef<FungibleTokenPrivateState>({
-    signingKey: hexToBytes(accountAddress || '01'.repeat(32)),
+    currentSecretKey: hexToBytes(accountAddress || PRESET_IDENTITIES[0].addressHex),
+    signingKey: hexToBytes(accountAddress || PRESET_IDENTITIES[0].addressHex),
   });
 
   // Keep separate simulated state ref for Test Mode
@@ -243,37 +431,49 @@ export function useFungibleToken() {
 
   const isActivityLogLoadedRef = useRef(false);
 
-  // Load activityLog on client mount only to prevent Next.js SSR hydration mismatch
+  // Load persistent activity & audit log on client mount and whenever activeContractAddress resolves
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
-            setActivityLog(parsed);
-          }
-        }
-      } catch (err) {
-        console.warn('[useFungibleToken] Error loading activity log:', err);
-      } finally {
-        isActivityLogLoadedRef.current = true;
-      }
+      const persisted = loadPersistentActivities(activeContractAddress);
+      setActivityLog(persisted);
+      isActivityLogLoadedRef.current = true;
     }
-  }, []);
+  }, [activeContractAddress]);
 
   // Persist activityLog to localStorage on changes (only after initial load)
   useEffect(() => {
     if (!isActivityLogLoadedRef.current) return;
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(
-          `${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`,
-          JSON.stringify(activityLog.slice(0, 30))
-        );
-      } catch {}
+    savePersistentActivities(activityLog, activeContractAddress);
+  }, [activityLog, activeContractAddress]);
+
+  const recordActivityEntry = useCallback((entry: ActivityItem) => {
+    setActivityLog((prev) => {
+      const updated = [entry, ...prev.filter((p) => p.id !== entry.id)];
+      savePersistentActivities(updated, activeContractAddress);
+      return updated;
+    });
+  }, [activeContractAddress]);
+
+  const updateActivityEntry = useCallback((id: string, updates: Partial<ActivityItem>) => {
+    setActivityLog((prev) => {
+      const updated = prev.map((item) => (item.id === id ? { ...item, ...updates } : item));
+      savePersistentActivities(updated, activeContractAddress);
+      return updated;
+    });
+  }, [activeContractAddress]);
+
+  const activeContractSaltBytes = useMemo(() => {
+    if (metadata.contractSalt) {
+      return hexToBytes(metadata.contractSalt);
     }
-  }, [activityLog]);
+    if (config?.contractSalt) {
+      return hexToBytes(config.contractSalt);
+    }
+    if (MIDNIGHT_CONFIG.contractSalt) {
+      return hexToBytes(MIDNIGHT_CONFIG.contractSalt);
+    }
+    return new Uint8Array(32).fill(42);
+  }, [metadata.contractSalt, config?.contractSalt]);
 
   // Check infrastructure health on mount
   useEffect(() => {
@@ -283,16 +483,19 @@ export function useFungibleToken() {
   }, []);
 
   // Initialize simulated test state (ONLY for Test Mode)
-  // Initializes contract strictly as defined in constructor(initialOwner: Bytes<32>)
+  // Initializes contract strictly as defined in constructor(salt: Bytes<32>, initialOwner: Bytes<32>, ...)
   const initSimulatedTestState = useCallback(() => {
     try {
-      const client = new FungibleTokenClient({});
-      clientRef.current = client;
-
       const dummyCoinPublicKey = '01'.repeat(32);
-      const initialOwnerBytes = hexToBytes(PRESET_IDENTITIES[0].addressHex);
+      const testSalt = config?.contractSalt ? hexToBytes(config.contractSalt) : new Uint8Array(32).fill(42);
+      const client = createConfiguredClient(testSalt);
+      clientRef.current = client;
+      const ownerSK = hexToBytes(PRESET_IDENTITIES[0].addressHex);
+      const ownerAccount = FungibleTokenClient.deriveAccount(ownerSK, testSalt);
       const initialPrivateState: FungibleTokenPrivateState = {
-        signingKey: initialOwnerBytes,
+        currentSecretKey: ownerSK,
+        secretKey: ownerSK,
+        signingKey: ownerSK,
       };
       privateStateRef.current = initialPrivateState;
 
@@ -300,8 +503,16 @@ export function useFungibleToken() {
         initialPrivateState,
         dummyCoinPublicKey
       );
-      // Directly execute constructor(initialOwner)
-      const initResult = client.initialState(constructorCtx, initialOwnerBytes);
+      // Directly execute constructor(salt, initialOwner, name, symbol, decimals, maxSupply)
+      const initResult = client.initialState(
+        constructorCtx,
+        testSalt,
+        ownerAccount,
+        'Midnight Token',
+        'MDT',
+        8n,
+        1_000_000n
+      );
       const st = initResult.currentContractState.data;
       const ps = initResult.currentPrivateState;
 
@@ -311,11 +522,11 @@ export function useFungibleToken() {
       const decoded = client.queryLedgerStateFromRaw(st);
       setLedgerState(decoded);
       ledgerStateSubjectRef.current.next(decoded);
-      setMetadata(extractMetadata(decoded, PRESET_IDENTITIES[0].addressHex));
+      setMetadata(extractMetadata(decoded, PRESET_IDENTITIES[0].addressHex, MIDNIGHT_CONFIG.networkId, testSalt));
     } catch (err) {
       console.warn('[useFungibleToken] Simulated test initialization error:', err);
     }
-  }, []);
+  }, [config?.contractSalt]);
 
   // Fetch real on-chain state for Lace Wallet Mode (with localStorage fallback if indexer hasn't indexed)
   const fetchLaceOnChainState = useCallback(async () => {
@@ -330,7 +541,7 @@ export function useFungibleToken() {
           const restoredState = deserializeChargedState(cachedRaw);
           if (restoredState) {
             const decoded = ledger(restoredState);
-            if (decoded && decoded._isInitialized) {
+            if (decoded) {
               cachedState = restoredState;
               cachedDecoded = decoded;
             }
@@ -342,20 +553,35 @@ export function useFungibleToken() {
           const cachedMetaRaw = localStorage.getItem(`${TOKEN_META_KEY_PREFIX}${activeContractAddress}`);
           if (cachedMetaRaw) {
             const parsedMeta = JSON.parse(cachedMetaRaw);
-            if (parsedMeta && parsedMeta.isInitialized) {
+            if (parsedMeta) {
               const ownerHex = parsedMeta.owner;
+              let callerDerivedHex = '';
+              if (accountAddress) {
+                try {
+                  const callerBytes = hexToBytes(accountAddress);
+                  callerDerivedHex = bytesToHex(FungibleTokenClient.deriveAccount(callerBytes, activeContractSaltBytes)).toLowerCase();
+                } catch {}
+              }
               const isCallerOwner = Boolean(
-                ownerHex && accountAddress && addressToHex32(accountAddress).toLowerCase() === ownerHex.toLowerCase()
+                ownerHex && accountAddress && (
+                  addressToHex32(accountAddress).toLowerCase() === ownerHex.toLowerCase() ||
+                  (callerDerivedHex && callerDerivedHex === ownerHex.toLowerCase())
+                )
               );
               setMetadata({
                 name: parsedMeta.name || 'Midnight Fungible Token',
                 symbol: parsedMeta.symbol || 'MFT',
                 decimals: Number(parsedMeta.decimals || 6),
                 totalSupply: BigInt(parsedMeta.totalSupply || '0'),
+                maxSupply: BigInt(parsedMeta.maxSupply || '0'),
                 isInitialized: true,
+                isPaused: Boolean(parsedMeta.isPaused),
                 owner: ownerHex,
                 ownerBech32: parsedMeta.ownerBech32,
+                emergencyPauser: parsedMeta.emergencyPauser,
+                emergencyPauserBech32: parsedMeta.emergencyPauserBech32,
                 isCallerOwner,
+                isCallerPauser: isCallerOwner,
               });
             }
           }
@@ -368,18 +594,19 @@ export function useFungibleToken() {
     // Immediately reflect cached initialized state so UI does not flicker to uninitialized
     if (cachedState && cachedDecoded) {
       laceChargedStateRef.current = cachedState;
-      const client = new FungibleTokenClient({});
+      const client = createConfiguredClient(activeContractSaltBytes);
       clientRef.current = client;
 
       setLedgerState(cachedDecoded);
       ledgerStateSubjectRef.current.next(cachedDecoded);
       setMetadata(extractMetadata(cachedDecoded, accountAddress));
-      console.log('[useFungibleToken] Restored initialized contract state from browser cache:', {
+      console.log('[useFungibleToken] Restored contract state from browser cache:', {
         name: cachedDecoded._name,
         symbol: cachedDecoded._symbol,
         decimals: cachedDecoded._decimals?.toString(),
         totalSupply: cachedDecoded._totalSupply?.toString(),
-        isInitialized: true,
+        maxSupply: cachedDecoded._maxSupply?.toString(),
+        isPaused: cachedDecoded._paused,
       });
     }
 
@@ -393,8 +620,8 @@ export function useFungibleToken() {
       if (onChainState && onChainState.data) {
         const decoded = ledger(onChainState.data);
 
-        // If the on-chain state is confirmed initialized, it is the canonical truth!
-        if (decoded && decoded._isInitialized) {
+        // If on-chain state exists, it is the canonical truth!
+        if (decoded) {
           laceChargedStateRef.current = onChainState.data;
           setLedgerState(decoded);
           ledgerStateSubjectRef.current.next(decoded);
@@ -414,21 +641,22 @@ export function useFungibleToken() {
                   symbol: meta.symbol,
                   decimals: meta.decimals,
                   totalSupply: meta.totalSupply.toString(),
+                  maxSupply: meta.maxSupply ? meta.maxSupply.toString() : '0',
                   isInitialized: true,
+                  isPaused: meta.isPaused,
                   owner: meta.owner,
                   ownerBech32: meta.ownerBech32,
+                  emergencyPauser: meta.emergencyPauser,
+                  emergencyPauserBech32: meta.emergencyPauserBech32,
                 })
               );
             } catch {}
           }
           return;
         } else if (cachedState && cachedDecoded) {
-          // The indexer has not yet processed the initialization transaction or reflects pre-initialization state:
-          // Keep the cached initialized state intact! Do NOT overwrite it with uninitialized!
-          console.log('[useFungibleToken] Preserving locally initialized contract state against lagging/pre-init indexer.');
+          console.log('[useFungibleToken] Preserving locally cached contract state against lagging indexer.');
           return;
         } else {
-          // Both indexer and cache are uninitialized
           laceChargedStateRef.current = onChainState.data;
           setLedgerState(decoded);
           ledgerStateSubjectRef.current.next(decoded);
@@ -437,7 +665,65 @@ export function useFungibleToken() {
         }
       }
     } catch (err) {
-      console.warn('[useFungibleToken] On-chain state query from indexer:', err);
+      console.warn('[useFungibleToken] On-chain state query from indexer publicDataProvider:', err);
+    }
+
+    // 2b. Direct HTTP Indexer Fallback (bypasses WebSocket/extension delays)
+    try {
+      const indexerUrl = config?.indexerUrl || MIDNIGHT_CONFIG.indexerUrl;
+      const res = await fetch(indexerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: CONTRACT_ACTION_QUERY,
+          variables: { address: activeContractAddress.trim() },
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const action = json.data?.contractAction;
+        if (action?.state) {
+          const stateBytes = toByteArray(action.state);
+          const contractState = ContractState.deserialize(stateBytes);
+          const decoded = ledger(contractState.data);
+          if (decoded) {
+            laceChargedStateRef.current = contractState.data;
+            setLedgerState(decoded);
+            ledgerStateSubjectRef.current.next(decoded);
+            const meta = extractMetadata(decoded, accountAddress);
+            setMetadata(meta);
+
+            if (typeof window !== 'undefined') {
+              try {
+                const serialized = serializeChargedState(contractState.data);
+                if (serialized) {
+                  localStorage.setItem(`${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`, serialized);
+                }
+                localStorage.setItem(
+                  `${TOKEN_META_KEY_PREFIX}${activeContractAddress}`,
+                  JSON.stringify({
+                    name: meta.name,
+                    symbol: meta.symbol,
+                    decimals: meta.decimals,
+                    totalSupply: meta.totalSupply.toString(),
+                    maxSupply: meta.maxSupply ? meta.maxSupply.toString() : '0',
+                    isInitialized: true,
+                    isPaused: meta.isPaused,
+                    owner: meta.owner,
+                    ownerBech32: meta.ownerBech32,
+                    emergencyPauser: meta.emergencyPauser,
+                    emergencyPauserBech32: meta.emergencyPauserBech32,
+                  })
+                );
+              } catch {}
+            }
+            return;
+          }
+        }
+      }
+    } catch (directErr) {
+      console.warn('[useFungibleToken] Direct HTTP indexer query fallback:', directErr);
     }
 
     // 3. If already restored from cache, we are done
@@ -445,13 +731,16 @@ export function useFungibleToken() {
       return;
     }
 
-    // 4. Fallback to clean uninitialized state only if never initialized and not found on-chain
-    const client = new FungibleTokenClient({});
+    // 4. Fallback to clean state only if not found on-chain
+    const client = createConfiguredClient(activeContractSaltBytes);
     clientRef.current = client;
 
     const dummyCoinPublicKey = addressToHex32(accountAddress);
     const initialOwnerBytes = hexToBytes(accountAddress || '01'.repeat(32));
+    const initialOwnerAccount = FungibleTokenClient.deriveAccount(initialOwnerBytes, activeContractSaltBytes);
     const initialPrivateState: FungibleTokenPrivateState = {
+      secretKey: initialOwnerBytes,
+      currentSecretKey: initialOwnerBytes,
       signingKey: initialOwnerBytes,
     };
     privateStateRef.current = initialPrivateState;
@@ -460,7 +749,15 @@ export function useFungibleToken() {
       initialPrivateState,
       dummyCoinPublicKey
     );
-    const initResult = client.initialState(constructorCtx, initialOwnerBytes);
+    const initResult = client.initialState(
+      constructorCtx,
+      activeContractSaltBytes,
+      initialOwnerAccount,
+      'Euro Token',
+      'EUT',
+      6n,
+      2000000000000n
+    );
     laceChargedStateRef.current = initResult.currentContractState.data;
     privateStateRef.current = initResult.currentPrivateState;
 
@@ -468,9 +765,9 @@ export function useFungibleToken() {
     setLedgerState(decoded);
     ledgerStateSubjectRef.current.next(decoded);
 
-    // Default clean uninitialized state for Lace mode
-    setMetadata(extractMetadata(decoded, accountAddress));
-  }, [extensionApi, accountAddress, activeContractAddress]);
+    // Default clean state for Lace mode
+    setMetadata(extractMetadata(decoded, accountAddress, MIDNIGHT_CONFIG.networkId, activeContractSaltBytes));
+  }, [extensionApi, accountAddress, activeContractAddress, activeContractSaltBytes, config?.indexerUrl]);
 
   // Query on-chain indexer for full token metadata & account distribution report
   const fetchIndexerReport = useCallback(
@@ -524,13 +821,21 @@ export function useFungibleToken() {
         signingKey: hexToBytes(accountAddress),
       };
       setMetadata((prev) => {
+        let callerDerivedHex = '';
+        try {
+          const callerBytes = hexToBytes(accountAddress);
+          callerDerivedHex = bytesToHex(FungibleTokenClient.deriveAccount(callerBytes, activeContractSaltBytes)).toLowerCase();
+        } catch {}
         const isCallerOwner = Boolean(
-          prev.isInitialized && prev.owner && addressToHex32(accountAddress).toLowerCase() === prev.owner.toLowerCase()
+          prev.isInitialized && prev.owner && (
+            addressToHex32(accountAddress).toLowerCase() === prev.owner.toLowerCase() ||
+            (callerDerivedHex && callerDerivedHex === prev.owner.toLowerCase())
+          )
         );
-        return { ...prev, isCallerOwner };
+        return { ...prev, isCallerOwner, isCallerPauser: isCallerOwner };
       });
     }
-  }, [accountAddress]);
+  }, [accountAddress, activeContractSaltBytes]);
 
   // RxJS State Subscription Hook: Subscribe to ledgerState changes
   useEffect(() => {
@@ -550,48 +855,208 @@ export function useFungibleToken() {
     async (
       circuitName: string,
       params: Record<string, string>,
-      circuitFn: (ctx: CompactRuntime.CircuitContext<any>) => any
+      circuitFn: (ctx: CompactRuntime.CircuitContext<any>) => any | Promise<any>,
+      options?: {
+        customSecretKey?: Uint8Array | string;
+        callerAccount?: Uint8Array;
+        circuitArgs?: any[];
+      }
     ) => {
       const txId = Math.random().toString(36).substring(2, 9);
+      const startTime = Date.now();
       const activityEntry: ActivityItem = {
         id: txId,
         circuitName,
         params,
         status: 'pending',
-        timestamp: Date.now(),
+        timestamp: startTime,
+        caller: accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : undefined),
+        contractAddress: activeContractAddress,
+        networkId: MIDNIGHT_CONFIG.networkId,
+        mode,
       };
 
-      setActivityLog((prev) => [activityEntry, ...prev]);
+      recordActivityEntry(activityEntry);
+      setActiveActionName(circuitName);
 
       try {
-        // STEP 1: Preparing Transaction & Balancing Fees
+        let effectiveSK: Uint8Array;
+        if (options?.customSecretKey) {
+          effectiveSK =
+            typeof options.customSecretKey === 'string'
+              ? hexToBytes(options.customSecretKey)
+              : options.customSecretKey;
+        } else {
+          const callerHex =
+            accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+          effectiveSK = hexToBytes(callerHex);
+        }
+
+        // =========================================================================
+        // LACE WALLET MODE: LIVE ON-CHAIN TRANSACTION EXECUTION VIA MIDNIGHT NETWORK
+        // =========================================================================
+        if (mode === 'lace') {
+          if (!extensionApi) {
+            throw new Error(
+              'Lace wallet is not connected. Please click "Connect Lace" in the top bar to connect or unlock your wallet, then try again.'
+            );
+          }
+          // STEP 1: Building Transaction Intent & Evaluating Witnesses
+          setTxStatus('preparing');
+          setStatusMessage(`Building ${circuitName} transaction intent & resolving Compact witnesses...`);
+
+          const rawProviders = createLaceMidnightProviders(extensionApi, { nodeUrl: config.nodeUrl });
+
+          // Wrap providers with step-by-step progress tracking for each lifecycle phase
+          const providers = {
+            ...rawProviders,
+            proofProvider: {
+              ...rawProviders.proofProvider,
+              proveTx: async (unprovenTx: any, config?: any) => {
+                // STEP 2: Zero-Knowledge Proof Generation via Proof Server
+                setTxStatus('proving');
+                setStatusMessage('Generating Zero-Knowledge Proof (PLONK circuit) via Proof Server...');
+                return await rawProviders.proofProvider.proveTx(unprovenTx, config);
+              },
+            },
+            walletProvider: {
+              ...rawProviders.walletProvider,
+              balanceTx: async (tx: any, ttl?: Date) => {
+                // STEP 3: Lace Wallet Signature & DUST Fee Balancing
+                setTxStatus('signing');
+                setStatusMessage('Please approve and sign the transaction in your Lace wallet extension...');
+                return await rawProviders.walletProvider.balanceTx(tx, ttl);
+              },
+            },
+            midnightProvider: {
+              ...rawProviders.midnightProvider,
+              submitTx: async (tx: any) => {
+                // STEP 4: Submitting Extrinsic to Midnight Network
+                setTxStatus('submitting');
+                setStatusMessage('Submitting signed transaction extrinsic to Midnight network...');
+                const txId = await rawProviders.midnightProvider.submitTx(tx);
+                setStatusMessage(`Extrinsic broadcasted (${txId.slice(0, 10)}...). Waiting for on-chain block inclusion...`);
+                return txId;
+              },
+            },
+          };
+
+          // Ensure private state is synchronized with effective secret key BEFORE finding contract
+          await providers.privateStateProvider.set('fungible-token-state', { secretKey: effectiveSK });
+
+          const witnesses = {
+            localSecretKey: (ctx: any) => {
+              // Prioritize effectiveSK (e.g. ownerSK during mint/admin or callerSK during user circuits)
+              const sk = effectiveSK || ctx.privateState?.secretKey;
+              return [{ ...ctx.privateState, secretKey: sk }, sk];
+            },
+          };
+
+          const compiledContract = CompiledContract.make('fungible-token', Contract).pipe(
+            CompiledContract.withWitnesses(witnesses)
+          );
+
+          const foundContract = await findDeployedContract(providers as any, {
+            compiledContract: compiledContract as any,
+            contractAddress: activeContractAddress,
+            privateStateId: 'fungible-token-state',
+            initialPrivateState: { secretKey: effectiveSK },
+          } as any);
+
+          const callFn = (foundContract.callTx as any)[circuitName];
+          if (typeof callFn !== 'function') {
+            throw new Error(`Circuit '${circuitName}' is not defined on deployed contract`);
+          }
+
+          const circuitArgs = options?.circuitArgs || [];
+          console.log(`[useFungibleToken] Executing live on-chain callTx.${circuitName} with args:`, circuitArgs);
+
+          const finalizedTxData = await callFn(...circuitArgs);
+          console.log(`[useFungibleToken] Live on-chain callTx.${circuitName} finalized:`, finalizedTxData);
+
+          const submittedHash =
+            (finalizedTxData?.public as any)?.txHash ||
+            (finalizedTxData?.public as any)?.txId ||
+            currentTxHash ||
+            '';
+          const blockNum = (finalizedTxData?.public as any)?.blockHeight;
+
+          // STEP 5: Committed on-chain in consensus block
+          setCurrentTxHash(submittedHash);
+          setCurrentBlock(blockNum);
+          setTxStatus('confirmed');
+          setStatusMessage(`Committed on-chain in Block #${blockNum}!`);
+
+          // Invalidate stale local storage cache so indexer is source of truth
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.removeItem(`${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+              localStorage.removeItem(`${TOKEN_META_KEY_PREFIX}${activeContractAddress}`);
+            } catch {}
+          }
+
+          // Update activity log with real transaction hash, block height, and duration
+          const durationMs = Date.now() - startTime;
+          updateActivityEntry(txId, {
+            status: 'confirmed',
+            txHash: submittedHash,
+            blockHeight: blockNum,
+            durationMs,
+          });
+
+          showToast(
+            'success',
+            `${circuitName} Successful`,
+            `On-chain transaction ${submittedHash.slice(0, 10)}... confirmed in Block #${blockNum}`
+          );
+
+          // Refresh on-chain state from indexer
+          setTimeout(async () => {
+            await fetchLaceOnChainState();
+            refreshBalances();
+            fetchIndexerReport();
+          }, 1500);
+
+          setTimeout(() => {
+            setTxStatus('idle');
+            setStatusMessage('');
+            setActiveActionName(null);
+          }, 6000);
+
+          return finalizedTxData;
+        }
+
+        // =========================================================================
+        // TEST MODE: SIMULATED EXECUTION (NO WALLET)
+        // =========================================================================
+        // STEP 1: Building Transaction Intent
         setTxStatus('preparing');
-        if (mode === 'lace') {
-          setStatusMessage('Balancing transaction with Lace Wallet DUST...');
-        } else {
-          setStatusMessage('Preparing transaction, balancing DUST fees (Simulated)...');
-        }
-        await new Promise((r) => setTimeout(r, 450));
+        setStatusMessage(`Building ${circuitName} transaction intent (Simulated)...`);
+        await new Promise((r) => setTimeout(r, 600));
 
-        let providers: MidnightProviders;
-        if (mode === 'lace' && extensionApi) {
-          providers = createLaceMidnightProviders(extensionApi);
-        } else {
-          providers = createSimulatedMidnightProviders();
-        }
-
-        // STEP 2: Generating Zero-Knowledge Proof
+        // STEP 2: Zero-Knowledge Proof Generation
         setTxStatus('proving');
-        if (mode === 'lace') {
-          setStatusMessage('Generating Zero-Knowledge Proof (Lace / Proof Server)...');
-        } else {
-          setStatusMessage('Generating Zero-Knowledge Proof (Compact Runtime)...');
-        }
-        await new Promise((r) => setTimeout(r, 650));
+        setStatusMessage('Generating Zero-Knowledge Proof (Compact Runtime Simulated)...');
+        await new Promise((r) => setTimeout(r, 750));
 
-        // Get target state ref depending on active mode
-        const currentActiveChargedState =
-          mode === 'lace' ? laceChargedStateRef.current : simulatedChargedStateRef.current;
+        // STEP 3: Wallet Signature & Fee Balancing
+        setTxStatus('signing');
+        setStatusMessage('Balancing DUST fee & signing transaction intent (Simulated)...');
+        await new Promise((r) => setTimeout(r, 600));
+
+        const providers = createSimulatedMidnightProviders();
+
+        if (!simulatedChargedStateRef.current) {
+          initSimulatedTestState();
+        }
+        const currentActiveChargedState = simulatedChargedStateRef.current;
+
+        privateStateRef.current = {
+          ...privateStateRef.current,
+          secretKey: effectiveSK,
+          currentSecretKey: effectiveSK,
+          signingKey: effectiveSK,
+        };
 
         const coinPubKey = addressToHex32(providers.walletProvider.getCoinPublicKey());
         const circuitCtx = CompactRuntime.createCircuitContext(
@@ -601,131 +1066,81 @@ export function useFungibleToken() {
           privateStateRef.current
         );
 
-        const result = circuitFn(circuitCtx);
-        const updatedChargedState = result.context.currentQueryContext.state;
-        const updatedPrivateState = result.context.currentPrivateState;
+        const result = await circuitFn(circuitCtx);
+        const updatedChargedState = result?.context?.currentQueryContext?.state ?? currentActiveChargedState;
+        const updatedPrivateState = result?.context?.currentPrivateState ?? privateStateRef.current;
 
-        // STEP 3: Submitting to Midnight Blockchain
+        // STEP 4: Submitting Extrinsic
         setTxStatus('submitting');
-        if (mode === 'lace') {
-          setStatusMessage('Submitting transaction to Midnight Preprod via Lace...');
-        } else {
-          setStatusMessage('Submitting to Midnight Blockchain (Preprod Node)...');
-        }
+        setStatusMessage('Submitting transaction extrinsic to Midnight Blockchain (Simulated)...');
 
         const submittedHash = await providers.midnightProvider.submitTx({ circuitName, params });
-        await new Promise((r) => setTimeout(r, 550));
+        await new Promise((r) => setTimeout(r, 650));
 
-        // STEP 4: Confirmed in Block (Only commit state after transaction succeeds)
+        // STEP 5: Committed
         const blockNum = 184200 + Math.floor(Math.random() * 50);
 
         setCurrentTxHash(submittedHash);
         setCurrentBlock(blockNum);
         setTxStatus('confirmed');
-        setStatusMessage(`Confirmed in Block #${blockNum}`);
+        setStatusMessage(`Committed in Block #${blockNum} (Simulated)`);
 
-        // Commit updated private state
         privateStateRef.current = updatedPrivateState;
 
-        // Decode updated ledger state immediately
         const updatedLedger = clientRef.current.queryLedgerStateFromRaw(updatedChargedState);
         setLedgerState(updatedLedger);
         ledgerStateSubjectRef.current.next(updatedLedger);
 
-        // Commit updated contract state to memory and persist to localStorage
-        const caller = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : null);
+        simulatedChargedStateRef.current = updatedChargedState;
+
+        const caller = accountAddress || PRESET_IDENTITIES[0].addressHex;
         const meta = extractMetadata(updatedLedger, caller);
-
-        if (mode === 'lace') {
-          laceChargedStateRef.current = updatedChargedState;
-          if (typeof window !== 'undefined') {
-            try {
-              const serialized = serializeChargedState(updatedChargedState);
-              if (serialized) {
-                localStorage.setItem(
-                  `${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`,
-                  serialized
-                );
-              }
-              const metaPayload = {
-                name: meta.name,
-                symbol: meta.symbol,
-                decimals: meta.decimals,
-                totalSupply: meta.totalSupply.toString(),
-                isInitialized: meta.isInitialized,
-                owner: meta.owner,
-                ownerBech32: meta.ownerBech32,
-              };
-              localStorage.setItem(
-                `${TOKEN_META_KEY_PREFIX}${activeContractAddress}`,
-                JSON.stringify(metaPayload)
-              );
-            } catch (err) {
-              console.warn('[useFungibleToken] Could not persist state to localStorage:', err);
-            }
-          }
-        } else {
-          simulatedChargedStateRef.current = updatedChargedState;
-        }
-
-        // Update token metadata
         setMetadata(meta);
 
-        // Update activity log
-        setActivityLog((prev) =>
-          prev.map((item) =>
-            item.id === txId
-              ? {
-                  ...item,
-                  status: 'confirmed',
-                  txHash: submittedHash,
-                  blockHeight: blockNum,
-                }
-              : item
-          )
-        );
+        const durationMs = Date.now() - startTime;
+        updateActivityEntry(txId, {
+          status: 'confirmed',
+          txHash: submittedHash,
+          blockHeight: blockNum,
+          durationMs,
+        });
 
         showToast(
           'success',
           `${circuitName} Successful`,
-          `Transaction ${submittedHash.slice(0, 10)}... confirmed in Block #${blockNum}`
+          `Simulated transaction ${submittedHash.slice(0, 10)}... confirmed in Block #${blockNum}`
         );
 
-        // Refresh wallet balances and indexer token report
         refreshBalances();
         fetchIndexerReport();
 
-        // Auto-reset status banner after view
         setTimeout(() => {
           setTxStatus('idle');
           setStatusMessage('');
-        }, 3500);
+          setActiveActionName(null);
+        }, 5000);
 
         return result.result;
       } catch (err: any) {
         console.error(`[useFungibleToken] Error in ${circuitName}:`, err);
+        setActiveActionName(null);
         const isLocked = isWalletLockedError(err);
         const isShutdown = isChannelShutdownError(err);
         const errMsg = isLocked
           ? 'Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar, enter your password to unlock it, and try again.'
           : isShutdown
           ? 'Lace extension channel was idle/shutdown. Connection has been refreshed. Please retry your transaction.'
-          : err.reason || err.message || 'Transaction failed';
+          : extractDetailedErrorMessage(err);
 
         setTxStatus('failed');
         setStatusMessage(errMsg);
 
-        setActivityLog((prev) =>
-          prev.map((item) =>
-            item.id === txId
-              ? {
-                  ...item,
-                  status: 'failed',
-                  error: errMsg,
-                }
-              : item
-          )
-        );
+        const durationMs = Date.now() - startTime;
+        updateActivityEntry(txId, {
+          status: 'failed',
+          error: errMsg,
+          durationMs,
+        });
 
         showToast(
           'error',
@@ -745,7 +1160,7 @@ export function useFungibleToken() {
         throw err;
       }
     },
-    [mode, extensionApi, showToast, refreshBalances, activeContractAddress]
+    [mode, extensionApi, showToast, refreshBalances, activeContractAddress, fetchLaceOnChainState, fetchIndexerReport, extractMetadata, recordActivityEntry, updateActivityEntry]
   );
 
   // Direct queries (read-only) against current decoded ledger state
@@ -753,10 +1168,31 @@ export function useFungibleToken() {
     (accountHex: string): bigint => {
       if (!ledgerState || !ledgerState._balances) return 0n;
       const accountBytes = hexToBytes(accountHex);
-      if (!ledgerState._balances.member(accountBytes)) {
-        return 0n;
+      // 1. Check spendable derived account first (this is the only balance that can be authenticated & transferred)
+      try {
+        const derived = FungibleTokenClient.deriveAccount(accountBytes, activeContractSaltBytes);
+        if (ledgerState._balances.member(derived)) {
+          return ledgerState._balances.lookup(derived);
+        }
+      } catch {}
+      // 2. If the queried account is already a derived spendable account (e.g. metadata.owner)
+      if (ledgerState._balances.member(accountBytes)) {
+        return ledgerState._balances.lookup(accountBytes);
       }
-      return ledgerState._balances.lookup(accountBytes);
+      return 0n;
+    },
+    [ledgerState, activeContractSaltBytes]
+  );
+
+  const getRawLockedBalanceOf = useCallback(
+    (accountHex: string): bigint => {
+      if (!ledgerState || !ledgerState._balances) return 0n;
+      const accountBytes = hexToBytes(accountHex);
+      // Returns balance sitting at the raw wallet address (unspendable due to ZK authenticate requirement)
+      if (ledgerState._balances.member(accountBytes)) {
+        return ledgerState._balances.lookup(accountBytes);
+      }
+      return 0n;
     },
     [ledgerState]
   );
@@ -766,127 +1202,375 @@ export function useFungibleToken() {
       if (!ledgerState || !ledgerState._allowances) return 0n;
       const ownerBytes = hexToBytes(ownerHex);
       const spenderBytes = hexToBytes(spenderHex);
+      const key: [Uint8Array, Uint8Array] = [ownerBytes, spenderBytes];
 
-      if (!ledgerState._allowances.member(ownerBytes)) {
+      if (!ledgerState._allowances.member(key)) {
         return 0n;
       }
-      const ownerMap = ledgerState._allowances.lookup(ownerBytes);
-      if (!ownerMap || !ownerMap.member(spenderBytes)) {
-        return 0n;
-      }
-      return ownerMap.lookup(spenderBytes);
+      return ledgerState._allowances.lookup(key);
     },
     [ledgerState]
+  );
+
+  // Helper to ensure recipient addresses are always converted to their spendable derived accounts
+  const resolveSpendableDestination = useCallback(
+    (destHex: string): Uint8Array => {
+      const clean = destHex.toLowerCase().replace(/^0x/, '');
+      const ownerClean = (metadata.owner || '').toLowerCase().replace(/^0x/, '');
+      // If destination is already the owner's spendable account, use as-is
+      if (ownerClean && clean === ownerClean) {
+        return hexToBytes(clean);
+      }
+      let toBytes = hexToBytes(clean);
+      try {
+        toBytes = FungibleTokenClient.deriveAccount(toBytes, activeContractSaltBytes);
+      } catch {}
+      return toBytes;
+    },
+    [metadata.owner, activeContractSaltBytes]
   );
 
   // Circuit Wrappers adhering strictly to Compact types and BigInt safety
   const initialize = useCallback(
     async (name: string, symbol: string, decimals: number | bigint) => {
-      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
-      const callerBytes = hexToBytes(callerHex);
-      const decBigInt = BigInt(decimals);
-      return executeCircuit(
-        'initialize',
-        { caller: callerHex, name, symbol, decimals: decBigInt.toString() },
-        (ctx) => clientRef.current.initialize(ctx, callerBytes, name, symbol, decBigInt)
-      );
+      showToast('info', 'Constructor Initialized', 'FungibleTokenV22 is initialized in constructor upon contract deployment.');
+      return [] as any;
     },
-    [accountAddress, mode, executeCircuit]
+    [showToast]
   );
 
   const transfer = useCallback(
-    async (toHex: string, amount: bigint | number) => {
-      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
-      const callerBytes = hexToBytes(callerHex);
-      const toBytes = hexToBytes(toHex);
+    async (toHex: string, amount: bigint | number, optionalCallerKeyHex?: string) => {
+      let callerSK: Uint8Array;
+      if (optionalCallerKeyHex && optionalCallerKeyHex.trim()) {
+        callerSK = hexToBytes(optionalCallerKeyHex.trim());
+      } else {
+        const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+        callerSK = hexToBytes(callerHex);
+      }
+      const callerAccount = FungibleTokenClient.deriveAccount(callerSK, activeContractSaltBytes);
+      const toBytes = resolveSpendableDestination(toHex);
       const valBigInt = BigInt(amount);
 
       return executeCircuit(
         'transfer',
         { to: toHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.transfer(ctx, callerBytes, toBytes, valBigInt)
+        (ctx) => clientRef.current.transfer(ctx, callerAccount, toBytes, valBigInt),
+        {
+          customSecretKey: callerSK,
+          circuitArgs: [callerAccount, toBytes, valBigInt],
+        }
       );
     },
-    [accountAddress, mode, executeCircuit]
+    [accountAddress, mode, activeContractSaltBytes, resolveSpendableDestination, executeCircuit]
   );
 
   const approve = useCallback(
-    async (spenderHex: string, amount: bigint | number) => {
-      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
-      const callerBytes = hexToBytes(callerHex);
-      const spenderBytes = hexToBytes(spenderHex);
+    async (spenderHex: string, amount: bigint | number, optionalCallerKeyHex?: string) => {
+      let callerSK: Uint8Array;
+      if (optionalCallerKeyHex && optionalCallerKeyHex.trim()) {
+        callerSK = hexToBytes(optionalCallerKeyHex.trim());
+      } else {
+        const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+        callerSK = hexToBytes(callerHex);
+      }
+      const callerAccount = FungibleTokenClient.deriveAccount(callerSK, activeContractSaltBytes);
+      const spenderBytes = resolveSpendableDestination(spenderHex);
       const valBigInt = BigInt(amount);
 
       return executeCircuit(
         'approve',
         { spender: spenderHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.approve(ctx, callerBytes, spenderBytes, valBigInt)
+        (ctx) => clientRef.current.approve(ctx, callerAccount, spenderBytes, valBigInt),
+        {
+          customSecretKey: callerSK,
+          circuitArgs: [callerAccount, spenderBytes, valBigInt],
+        }
       );
     },
-    [accountAddress, mode, executeCircuit]
+    [accountAddress, mode, activeContractSaltBytes, resolveSpendableDestination, executeCircuit]
   );
 
   const transferFrom = useCallback(
-    async (fromHex: string, toHex: string, amount: bigint | number) => {
-      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
-      const callerBytes = hexToBytes(callerHex);
-      const fromBytes = hexToBytes(fromHex);
-      const toBytes = hexToBytes(toHex);
+    async (fromHex: string, toHex: string, amount: bigint | number, optionalSpenderKeyHex?: string) => {
+      let spenderSK: Uint8Array;
+      if (optionalSpenderKeyHex && optionalSpenderKeyHex.trim()) {
+        spenderSK = hexToBytes(optionalSpenderKeyHex.trim());
+      } else {
+        const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+        spenderSK = hexToBytes(callerHex);
+      }
+      const spenderAccount = FungibleTokenClient.deriveAccount(spenderSK, activeContractSaltBytes);
+      const fromBytes = resolveSpendableDestination(fromHex);
+      const toBytes = resolveSpendableDestination(toHex);
       const valBigInt = BigInt(amount);
 
       return executeCircuit(
         'transferFrom',
         { from: fromHex, to: toHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.transferFrom(ctx, callerBytes, fromBytes, toBytes, valBigInt)
+        (ctx) => clientRef.current.transferFrom(ctx, spenderAccount, fromBytes, toBytes, valBigInt),
+        {
+          customSecretKey: spenderSK,
+          circuitArgs: [spenderAccount, fromBytes, toBytes, valBigInt],
+        }
       );
     },
-    [accountAddress, mode, executeCircuit]
+    [accountAddress, mode, activeContractSaltBytes, resolveSpendableDestination, executeCircuit]
+  );
+
+  const resolveOwnerSecretKey = useCallback(
+    (optionalKeyHex?: string): Uint8Array => {
+      if (optionalKeyHex && optionalKeyHex.trim()) {
+        return hexToBytes(optionalKeyHex.trim());
+      }
+      // If connected wallet account directly matches or derives to owner, prioritize connected wallet
+      if (accountAddress && metadata.owner) {
+        try {
+          const derived = bytesToHex(
+            FungibleTokenClient.deriveAccount(hexToBytes(accountAddress), activeContractSaltBytes)
+          ).toLowerCase();
+          if (
+            derived === metadata.owner.toLowerCase() ||
+            addressToHex32(accountAddress).toLowerCase() === metadata.owner.toLowerCase()
+          ) {
+            return hexToBytes(accountAddress);
+          }
+        } catch {}
+      }
+
+      // Check saved key in localStorage
+      const saved =
+        typeof window !== 'undefined'
+          ? localStorage.getItem(`midnight_owner_sk_${activeContractAddress}`)
+          : null;
+      if (saved && saved.trim()) {
+        return hexToBytes(saved.trim());
+      }
+      if ((config as any)?.ownerSecretKey) {
+        return hexToBytes((config as any).ownerSecretKey);
+      }
+      if (mode === 'test') {
+        return hexToBytes(accountAddress || PRESET_IDENTITIES[0].addressHex);
+      }
+      return hexToBytes(accountAddress || '01'.repeat(32));
+    },
+    [accountAddress, metadata.owner, activeContractAddress, activeContractSaltBytes, config, mode]
   );
 
   const mint = useCallback(
-    async (accountHex: string, amount: bigint | number) => {
-      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
-      const callerBytes = hexToBytes(callerHex);
-      const toBytes = hexToBytes(accountHex);
+    async (accountHex: string, amount: bigint | number, optionalOwnerKeyHex?: string) => {
+      // Resolve owner secret key for mint authorization
+      const ownerSK = resolveOwnerSecretKey(optionalOwnerKeyHex);
+      const toBytes = resolveSpendableDestination(accountHex);
       const valBigInt = BigInt(amount);
 
       return executeCircuit(
         'mint',
-        { caller: callerHex, to: accountHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.mint(ctx, callerBytes, toBytes, valBigInt)
+        { to: accountHex, value: valBigInt.toString() },
+        (ctx) => clientRef.current.mint(ctx, toBytes, valBigInt),
+        {
+          customSecretKey: ownerSK,
+          circuitArgs: [toBytes, valBigInt],
+        }
       );
     },
-    [accountAddress, mode, executeCircuit]
+    [resolveOwnerSecretKey, resolveSpendableDestination, executeCircuit]
   );
 
   const burn = useCallback(
-    async (accountHexOrAmount: string | bigint | number, optionalAmount?: bigint | number) => {
-      const callerHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
-      const callerBytes = hexToBytes(callerHex);
-      const valBigInt = typeof optionalAmount !== 'undefined'
-        ? BigInt(optionalAmount)
-        : BigInt(accountHexOrAmount);
+    async (accountHexOrAmount: string | bigint | number, optionalAmount?: bigint | number, optionalCallerKeyHex?: string) => {
+      let accountHex: string;
+      let amount: bigint | number;
+
+      if (
+        typeof accountHexOrAmount === 'bigint' ||
+        typeof accountHexOrAmount === 'number' ||
+        (typeof accountHexOrAmount === 'string' && /^\d+$/.test(accountHexOrAmount))
+      ) {
+        accountHex = accountAddress || (mode === 'test' ? PRESET_IDENTITIES[0].addressHex : '01'.repeat(32));
+        amount = typeof accountHexOrAmount === 'string' ? BigInt(accountHexOrAmount) : accountHexOrAmount;
+      } else {
+        accountHex = accountHexOrAmount;
+        amount = optionalAmount ?? 0n;
+      }
+
+      let callerSK = optionalCallerKeyHex
+        ? hexToBytes(optionalCallerKeyHex)
+        : hexToBytes(accountAddress || '01'.repeat(32));
+      let callerAccount = hexToBytes(accountHex);
+
+      if (mode === 'test') {
+        try {
+          callerAccount = FungibleTokenClient.deriveAccount(callerAccount, activeContractSaltBytes);
+        } catch {}
+      } else if (accountAddress) {
+        // In Lace mode: if caller provided raw wallet address, spend from their derived account
+        const cleanAccount = accountHex.toLowerCase().replace(/^0x/, '');
+        const cleanCaller = accountAddress.toLowerCase().replace(/^0x/, '');
+        if (cleanAccount === cleanCaller) {
+          try {
+            callerAccount = FungibleTokenClient.deriveAccount(hexToBytes(cleanCaller), activeContractSaltBytes);
+          } catch {}
+        }
+      }
+
+      const valBigInt = BigInt(amount);
 
       return executeCircuit(
         'burn',
-        { caller: callerHex, value: valBigInt.toString() },
-        (ctx) => clientRef.current.burn(ctx, callerBytes, valBigInt)
+        { from: accountHex, value: valBigInt.toString() },
+        (ctx) => clientRef.current.burn(ctx, callerAccount, valBigInt),
+        {
+          customSecretKey: callerSK,
+          circuitArgs: [callerAccount, valBigInt],
+        }
       );
     },
-    [accountAddress, mode, executeCircuit]
+    [accountAddress, mode, activeContractSaltBytes, executeCircuit]
+  );
+
+  const pause = useCallback(
+    async (optionalKeyHex?: string) => {
+      const key = resolveOwnerSecretKey(optionalKeyHex);
+      const callerAccount = FungibleTokenClient.deriveAccount(key, activeContractSaltBytes);
+
+      return executeCircuit(
+        'pause',
+        { caller: bytesToHex(callerAccount) },
+        (ctx) => clientRef.current.pause(ctx, callerAccount),
+        {
+          customSecretKey: key,
+          circuitArgs: [callerAccount],
+        }
+      );
+    },
+    [activeContractSaltBytes, resolveOwnerSecretKey, executeCircuit]
+  );
+
+  const unpause = useCallback(
+    async (optionalKeyHex?: string) => {
+      const key = resolveOwnerSecretKey(optionalKeyHex);
+      const callerAccount = FungibleTokenClient.deriveAccount(key, activeContractSaltBytes);
+
+      return executeCircuit(
+        'unpause',
+        { caller: bytesToHex(callerAccount) },
+        (ctx) => clientRef.current.unpause(ctx, callerAccount),
+        {
+          customSecretKey: key,
+          circuitArgs: [callerAccount],
+        }
+      );
+    },
+    [activeContractSaltBytes, resolveOwnerSecretKey, executeCircuit]
+  );
+
+  const setEmergencyPauser = useCallback(
+    async (newPauserHex: string, optionalOwnerKeyHex?: string) => {
+      const ownerSK = resolveOwnerSecretKey(optionalOwnerKeyHex);
+      const ownerAccount = FungibleTokenClient.deriveAccount(ownerSK, activeContractSaltBytes);
+
+      let pauserBytes = hexToBytes(newPauserHex);
+      if (mode === 'test') {
+        try {
+          pauserBytes = FungibleTokenClient.deriveAccount(pauserBytes, activeContractSaltBytes);
+        } catch {}
+      }
+
+      return executeCircuit(
+        'setEmergencyPauser',
+        { caller: bytesToHex(ownerAccount), newPauser: newPauserHex },
+        (ctx) => clientRef.current.setEmergencyPauser(ctx, ownerAccount, pauserBytes),
+        {
+          customSecretKey: ownerSK,
+          circuitArgs: [ownerAccount, pauserBytes],
+        }
+      );
+    },
+    [mode, activeContractSaltBytes, resolveOwnerSecretKey, executeCircuit]
+  );
+
+  const emergencyWithdraw = useCallback(
+    async (amount: bigint | number, tokenContractAddress?: string, optionalOwnerKeyHex?: string) => {
+      const ownerSK = resolveOwnerSecretKey(optionalOwnerKeyHex);
+      const ownerAccount = FungibleTokenClient.deriveAccount(ownerSK, activeContractSaltBytes);
+      const targetToken = tokenContractAddress ? hexToBytes(tokenContractAddress) : hexToBytes(activeContractAddress);
+      const valBigInt = BigInt(amount);
+
+      return executeCircuit(
+        'emergencyWithdraw',
+        { caller: bytesToHex(ownerAccount), token: bytesToHex(targetToken), amount: valBigInt.toString() },
+        (ctx) => clientRef.current.emergencyWithdraw(ctx, ownerAccount, targetToken, valBigInt),
+        {
+          customSecretKey: ownerSK,
+          circuitArgs: [ownerAccount, { bytes: targetToken }, valBigInt],
+        }
+      );
+    },
+    [activeContractAddress, activeContractSaltBytes, resolveOwnerSecretKey, executeCircuit]
+  );
+
+  const adminReallocate = useCallback(
+    async (
+      trappedAccountHexOrAddress: string,
+      targetSpendableAccountHexOrAddress: string,
+      amount: bigint | number | string,
+      optionalOwnerKeyHex?: string
+    ) => {
+      const ownerSK = resolveOwnerSecretKey(optionalOwnerKeyHex);
+      const ownerAccount = FungibleTokenClient.deriveAccount(ownerSK, activeContractSaltBytes);
+
+      // Trapped account: can be raw address or derived account hex (exact on-chain key holding the tokens)
+      const trappedAccountBytes = hexToBytes(addressToHex32(trappedAccountHexOrAddress));
+
+      // Target spendable account: resolve spendable destination if a raw address was provided
+      const targetSpendableBytes = resolveSpendableDestination(targetSpendableAccountHexOrAddress);
+
+      const valBigInt = BigInt(amount);
+
+      return executeCircuit(
+        'adminReallocate',
+        {
+          caller: bytesToHex(ownerAccount),
+          trappedAccount: bytesToHex(trappedAccountBytes),
+          targetSpendableAccount: bytesToHex(targetSpendableBytes),
+          amount: valBigInt.toString(),
+        },
+        (ctx) =>
+          clientRef.current.adminReallocate(
+            ctx,
+            ownerAccount,
+            trappedAccountBytes,
+            targetSpendableBytes,
+            valBigInt
+          ),
+        {
+          customSecretKey: ownerSK,
+          circuitArgs: [ownerAccount, trappedAccountBytes, targetSpendableBytes, valBigInt],
+        }
+      );
+    },
+    [
+      activeContractSaltBytes,
+      resolveOwnerSecretKey,
+      resolveSpendableDestination,
+      executeCircuit,
+    ]
   );
 
   const resetContractCache = useCallback(() => {
     if (typeof window !== 'undefined') {
       try {
         localStorage.removeItem(`${LACE_STORAGE_KEY_PREFIX}${activeContractAddress}`);
-        localStorage.removeItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+        // NOTE: Activity & audit logs are intentionally preserved across cache resets.
         localStorage.removeItem(`${TOKEN_META_KEY_PREFIX}${activeContractAddress}`);
+        localStorage.removeItem('midnight_infra_config_override');
+        localStorage.removeItem('midnight_infra_preset_override');
       } catch (e) {
         console.warn('[useFungibleToken] Failed to clear localStorage:', e);
       }
     }
-    setActivityLog([]);
+    // Activity log remains intact for complete audit history
     if (mode === 'lace') {
       laceChargedStateRef.current = null;
       fetchLaceOnChainState();
@@ -894,8 +1578,21 @@ export function useFungibleToken() {
     } else {
       initSimulatedTestState();
     }
-    showToast('info', 'Contract Cache Cleared', 'Contract state re-synchronized from live on-chain indexer.');
-  }, [mode, fetchLaceOnChainState, fetchIndexerReport, initSimulatedTestState, showToast]);
+    showToast('info', 'Contract Cache Cleared', 'Contract state re-synchronized from live on-chain indexer. Audit logs preserved.');
+  }, [mode, activeContractAddress, fetchLaceOnChainState, fetchIndexerReport, initSimulatedTestState, showToast]);
+
+  const clearActivityLog = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(MASTER_AUDIT_LOG_KEY);
+        localStorage.removeItem(`${ACTIVITY_STORAGE_KEY_PREFIX}${activeContractAddress}`);
+      } catch (e) {
+        console.warn('[useFungibleToken] Failed to clear activity log from localStorage:', e);
+      }
+    }
+    setActivityLog([]);
+    showToast('info', 'Audit Trail Cleared', 'Persistent audit and activity logs have been reset.');
+  }, [activeContractAddress, showToast]);
 
   return {
     metadata,
@@ -905,6 +1602,7 @@ export function useFungibleToken() {
     currentBlock,
     statusMessage,
     activityLog,
+    clearActivityLog,
     infraStatus,
     indexerReport,
     isQueryingIndexer,
@@ -916,8 +1614,16 @@ export function useFungibleToken() {
     transferFrom,
     mint,
     burn,
+    pause,
+    unpause,
+    setEmergencyPauser,
+    emergencyWithdraw,
+    adminReallocate,
     getBalanceOf,
+    getRawLockedBalanceOf,
     getAllowance,
     resetContractCache,
+    activeActionName,
+    dismissTxStatus,
   };
 }

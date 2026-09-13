@@ -210,7 +210,7 @@ export function calculateAccountSharesFromLedger(
     decimals,
     totalSupply,
     formattedTotalSupply: formatTokenAmount(totalSupply, decimals),
-    isInitialized: ledgerState._isInitialized,
+    isInitialized: Boolean((ledgerState as any)._isInitialized ?? (ledgerState.owner && !ledgerState.owner.every((b: number) => b === 0))),
     owner: ownerHex,
     ownerBech32: ownerBech32,
     holders,
@@ -290,3 +290,115 @@ export async function queryIndexerContractState(
     source: 'indexer',
   });
 }
+
+export interface OnChainTxVerification {
+  id?: number | string;
+  hash: string;
+  blockHeight?: number;
+  blockHash?: string;
+  protocolVersion?: number;
+  contractActions?: Array<{ address: string }>;
+  verified: boolean;
+  error?: string;
+  checkedAt: string;
+}
+
+/**
+ * Directly queries the Midnight Indexer GraphQL API to verify whether a transaction has been confirmed on-chain.
+ */
+export async function queryTransactionOnChain(
+  txHash: string,
+  indexerUrl: string = 'https://indexer.preprod.midnight.network/api/v4/graphql'
+): Promise<OnChainTxVerification> {
+  const cleanHash = txHash.replace(/^0x/i, '').trim();
+
+  // Validate hex characters
+  const isHex = /^[0-9a-fA-F]+$/.test(cleanHash);
+  if (!isHex || cleanHash.length === 0) {
+    return {
+      hash: txHash,
+      verified: false,
+      error: `Invalid transaction hash "${txHash}". Midnight on-chain transaction hashes must be valid hexadecimal strings (64 characters / 32 bytes).`,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  // Construct offset: if 64 hex characters (32 bytes), use hash; otherwise use identifier
+  const is32ByteHash = cleanHash.length === 64;
+  const offsetVariable = is32ByteHash
+    ? { hash: cleanHash.toLowerCase() }
+    : { identifier: cleanHash.toLowerCase() };
+
+  const query = `
+    query VerifyTx($offset: TransactionOffset!) {
+      transactions(offset: $offset) {
+        id
+        hash
+        protocolVersion
+        block {
+          height
+          hash
+        }
+        contractActions {
+          address
+        }
+      }
+    }
+  `;
+
+  try {
+    const res = await fetch(indexerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables: { offset: offsetVariable } }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Indexer responded with HTTP ${res.status}: ${res.statusText}`);
+    }
+
+    const json = await res.json();
+    if (json.errors && json.errors.length > 0) {
+      const errMsg = json.errors[0].message || '';
+      if (errMsg.includes('ByteArray<32>')) {
+        throw new Error(
+          `Invalid 32-byte transaction hash format (${cleanHash.length} chars). Midnight on-chain transaction hashes must be exactly 64 hexadecimal characters.`
+        );
+      }
+      throw new Error(errMsg);
+    }
+
+    const txs = json.data?.transactions || [];
+    if (txs.length === 0) {
+      return {
+        hash: cleanHash,
+        verified: false,
+        error: is32ByteHash
+          ? 'Transaction not found in indexer yet (pending inclusion or indexing lag, usually ~15-30s). Note: Simulated transactions are not on-chain.'
+          : `Identifier (${cleanHash.slice(0, 16)}...) not indexed on Midnight Preprod.`,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    const first = txs[0];
+    return {
+      id: first.id,
+      hash: first.hash,
+      blockHeight: first.block?.height,
+      blockHash: first.block?.hash,
+      protocolVersion: first.protocolVersion,
+      contractActions: first.contractActions,
+      verified: true,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (err: any) {
+    return {
+      hash: cleanHash,
+      verified: false,
+      error: err?.message || 'Failed to connect to Midnight Indexer',
+      checkedAt: new Date().toISOString(),
+    };
+  }
+}
+

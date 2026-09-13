@@ -334,33 +334,58 @@ describe('Module D: Explorer URL Formatting', () => {
 });
 
 describe('Module E: Contract State Serialization & Refresh Persistence', () => {
+  const dummyCoinPubKey = '01'.repeat(32);
+  const dummyContractAddress = '00'.repeat(32);
+  const dummyAddressBytes = Uint8Array.from(Buffer.from(dummyContractAddress, 'hex'));
+  const pad32 = (str: string): Uint8Array => {
+    const res = new Uint8Array(32);
+    const buf = Buffer.from(str, 'utf8');
+    res.set(buf.subarray(0, 32));
+    return res;
+  };
+  const createKey = (b: number): Uint8Array => new Uint8Array(32).fill(b);
+  const domainTagAuth = pad32('fungible-token:auth');
+  const CONTRACT_SALT = createKey(42);
+
+  const OWNER_SK = createKey(1);
+  const ALICE_SK = createKey(2);
+
+  const helperContract = new Contract({
+    localSecretKey: (ctx: any) => [ctx.privateState, new Uint8Array(32)],
+  });
+
+  const deriveAccount = (sk: Uint8Array, salt: Uint8Array = CONTRACT_SALT): Uint8Array => {
+    return (helperContract as any)._persistentHash_1([domainTagAuth, salt, sk]);
+  };
+
+  const ownerAccount = deriveAccount(OWNER_SK);
+  const aliceAccount = deriveAccount(ALICE_SK);
+
   it('should serialize initialized state and restore it accurately across browser reloads', () => {
-    const contract = new Contract({});
-    const dummyCoinPubKey = '01'.repeat(32);
-    const owner = new Uint8Array(32).fill(0x01);
-    const constructorCtx = CompactRuntime.createConstructorContext({}, dummyCoinPubKey);
-    const init = contract.initialState(constructorCtx, owner);
+    const witnesses = {
+      localSecretKey: (ctx: any): [any, Uint8Array] => [ctx.privateState, ctx.privateState?.currentSecretKey || OWNER_SK],
+    };
+    const contract = new Contract(witnesses);
+    const constructorCtx = CompactRuntime.createConstructorContext({ currentSecretKey: OWNER_SK }, dummyCoinPubKey);
+    const init = contract.initialState(
+      constructorCtx,
+      CONTRACT_SALT,
+      ownerAccount,
+      'Midnight Gold',
+      'MDG',
+      6n,
+      1_000_000n
+    );
 
     const circuitCtx = CompactRuntime.createCircuitContext(
-      dummyCoinPubKey,
+      dummyContractAddress,
       dummyCoinPubKey,
       init.currentContractState.data,
-      {}
+      { currentSecretKey: OWNER_SK }
     );
 
-    // Initialize token
-    const resInit = contract.circuits.initialize(circuitCtx, owner, 'Midnight Gold', 'MDG', 6n);
-    const initChargedState = resInit.context.currentQueryContext.state;
-
-    // Mint tokens to Alice (caller must be owner)
-    const alice = new Uint8Array(32).fill(0xaa);
-    const mintCtx = CompactRuntime.createCircuitContext(
-      dummyCoinPubKey,
-      dummyCoinPubKey,
-      initChargedState,
-      {}
-    );
-    const resMint = contract.circuits.mint(mintCtx, owner, alice, 75_000n);
+    // Mint tokens to Alice
+    const resMint = contract.circuits.mint(circuitCtx, aliceAccount, 75_000n);
     const updatedChargedState = resMint.context.currentQueryContext.state;
 
     // Verify state before serialization
@@ -369,9 +394,9 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     expect(ledgerBefore._symbol).toBe('MDG');
     expect(ledgerBefore._decimals).toBe(6n);
     expect(ledgerBefore._totalSupply).toBe(75_000n);
-    expect(ledgerBefore._isInitialized).toBe(true);
-    expect(ledgerBefore.owner).toEqual(owner);
-    expect(ledgerBefore._balances.lookup(alice)).toBe(75_000n);
+    expect(ledgerBefore._maxSupply).toBe(1_000_000n);
+    expect(ledgerBefore.owner).toEqual(ownerAccount);
+    expect(ledgerBefore._balances.lookup(aliceAccount)).toBe(75_000n);
 
     // Simulate browser localStorage save
     const serialized = serializeChargedState(updatedChargedState);
@@ -388,62 +413,49 @@ describe('Module E: Contract State Serialization & Refresh Persistence', () => {
     expect(ledgerAfter._symbol).toBe('MDG');
     expect(ledgerAfter._decimals).toBe(6n);
     expect(ledgerAfter._totalSupply).toBe(75_000n);
-    expect(ledgerAfter._isInitialized).toBe(true);
-    expect(ledgerAfter.owner).toEqual(owner);
-    expect(ledgerAfter._balances.lookup(alice)).toBe(75_000n);
+    expect(ledgerAfter._maxSupply).toBe(1_000_000n);
+    expect(ledgerAfter.owner).toEqual(ownerAccount);
+    expect(ledgerAfter._balances.lookup(aliceAccount)).toBe(75_000n);
   });
 
-  it('should reject re-initialization when already initialized and maintain state intact', () => {
-    const contract = new Contract({});
-    const dummyCoinPubKey = '01'.repeat(32);
-    const owner = new Uint8Array(32).fill(0x01);
-    const constructorCtx = CompactRuntime.createConstructorContext({}, dummyCoinPubKey);
-    const init = contract.initialState(constructorCtx, owner);
-
-    const circuitCtx = CompactRuntime.createCircuitContext(
-      dummyCoinPubKey,
-      dummyCoinPubKey,
-      init.currentContractState.data,
-      {}
+  it('should enforce maxSupply cap during minting', () => {
+    const witnesses = {
+      localSecretKey: (ctx: any): [any, Uint8Array] => [ctx.privateState, OWNER_SK],
+    };
+    const contract = new Contract(witnesses);
+    const constructorCtx = CompactRuntime.createConstructorContext({ currentSecretKey: OWNER_SK }, dummyCoinPubKey);
+    const init = contract.initialState(
+      constructorCtx,
+      CONTRACT_SALT,
+      ownerAccount,
+      'Midnight Gold',
+      'MDG',
+      6n,
+      100_000n
     );
 
-    // First initialization succeeds
-    const resInit = contract.circuits.initialize(circuitCtx, owner, 'Midnight Gold', 'MDG', 6n);
-    const chargedState = resInit.context.currentQueryContext.state;
+    const circuitCtx = CompactRuntime.createCircuitContext(
+      dummyContractAddress,
+      dummyCoinPubKey,
+      init.currentContractState.data,
+      { currentSecretKey: OWNER_SK }
+    );
 
-    // Second initialization on the same charged state must throw CompactError
+    // Minting up to cap succeeds
+    const resMint = contract.circuits.mint(circuitCtx, aliceAccount, 100_000n);
+    expect(resMint.result).toBe(true);
+
+    // Minting beyond cap fails
     const secondCtx = CompactRuntime.createCircuitContext(
+      dummyContractAddress,
       dummyCoinPubKey,
-      dummyCoinPubKey,
-      chargedState,
-      {}
+      resMint.context.currentQueryContext.state,
+      { currentSecretKey: OWNER_SK }
     );
 
     expect(() => {
-      contract.circuits.initialize(secondCtx, owner, 'New Name', 'NEW', 18n);
-    }).toThrow();
-  });
-
-  it('should prioritize initialized cached state over an uninitialized indexer contract state', () => {
-    // 1. Uninitialized state (e.g. from indexer prior to block finalization)
-    const contract = new Contract({});
-    const dummyCoinPubKey = '01'.repeat(32);
-    const owner = new Uint8Array(32).fill(0x01);
-    const constructorCtx = CompactRuntime.createConstructorContext({}, dummyCoinPubKey);
-    const uninitializedState = contract.initialState(constructorCtx, owner).currentContractState.data;
-    const uninitDecoded = ledger(uninitializedState);
-    expect(uninitDecoded._isInitialized).toBe(false);
-
-    // 2. Initialized state (from user's initialization transaction)
-    const circuitCtx = CompactRuntime.createCircuitContext(dummyCoinPubKey, dummyCoinPubKey, uninitializedState, {});
-    const initRes = contract.circuits.initialize(circuitCtx, owner, 'Midnight Gold', 'MDG', 6n);
-    const initializedState = initRes.context.currentQueryContext.state;
-    const initDecoded = ledger(initializedState);
-    expect(initDecoded._isInitialized).toBe(true);
-
-    // 3. Cache preservation condition: uninitialized indexer must NOT overwrite initialized cache
-    const shouldPreserveCache = !uninitDecoded._isInitialized && initDecoded._isInitialized;
-    expect(shouldPreserveCache).toBe(true);
+      contract.circuits.mint(secondCtx, aliceAccount, 1n);
+    }).toThrow('FungibleToken: supply overflow');
   });
 });
 
@@ -587,68 +599,94 @@ describe('Module G: Midnight Indexer Contract Query & Account Share Calculation'
 describe('Module E: Smart Contract Direct Circuit Access Control Enforcement', () => {
   const dummyContractAddress = '00'.repeat(32);
   const dummyCoinPublicKey = '01'.repeat(32);
+  const dummyAddressBytes = Uint8Array.from(Buffer.from(dummyContractAddress, 'hex'));
+  const pad32 = (str: string): Uint8Array => {
+    const res = new Uint8Array(32);
+    const buf = Buffer.from(str, 'utf8');
+    res.set(buf.subarray(0, 32));
+    return res;
+  };
   const createKey = (b: number): Uint8Array => new Uint8Array(32).fill(b);
+  const domainTagAuth = pad32('fungible-token:auth');
 
-  const OWNER = createKey(1);
-  const NON_OWNER = createKey(2);
-  const RECIPIENT = createKey(3);
+  const OWNER_SK = createKey(1);
+  const NON_OWNER_SK = createKey(2);
+  const RECIPIENT_SK = createKey(3);
 
-  let contract: Contract<Record<string, never>>;
-  let privateState: Record<string, never>;
+  const helperContract = new Contract({
+    localSecretKey: (ctx: any) => [ctx.privateState, new Uint8Array(32)],
+  });
+
+  const CONTRACT_SALT = createKey(42);
+
+  const deriveAccount = (sk: Uint8Array, salt: Uint8Array = CONTRACT_SALT): Uint8Array => {
+    return (helperContract as any)._persistentHash_1([domainTagAuth, salt, sk]);
+  };
+
+  const OWNER = deriveAccount(OWNER_SK);
+  const NON_OWNER = deriveAccount(NON_OWNER_SK);
+  const RECIPIENT = deriveAccount(RECIPIENT_SK);
+
+  let currentCallerSecretKey: Uint8Array;
+  let contract: Contract<any>;
   let circuitContext: any;
 
   beforeEach(() => {
-    contract = new Contract({});
-    privateState = {};
+    currentCallerSecretKey = OWNER_SK;
+    contract = new Contract({
+      localSecretKey: (ctx: any) => [ctx.privateState, ctx.privateState?.currentSecretKey ?? currentCallerSecretKey],
+    });
 
-    const constructorCtx = CompactRuntime.createConstructorContext(privateState, dummyCoinPublicKey);
-    const { currentContractState, currentPrivateState } = contract.initialState(constructorCtx, OWNER);
-    privateState = currentPrivateState;
+    const constructorCtx = CompactRuntime.createConstructorContext({ currentSecretKey: OWNER_SK }, dummyCoinPublicKey);
+    const { currentContractState } = contract.initialState(
+      constructorCtx,
+      CONTRACT_SALT,
+      OWNER,
+      'Test Token',
+      'TT',
+      18n,
+      1_000_000n
+    );
 
     circuitContext = CompactRuntime.createCircuitContext(
       dummyContractAddress,
       dummyCoinPublicKey,
       currentContractState.data,
-      privateState
-    );
-
-    // Initialize contract
-    const initRes = contract.circuits.initialize(circuitContext, OWNER, 'Test Token', 'TT', 18n);
-    circuitContext = CompactRuntime.createCircuitContext(
-      dummyContractAddress,
-      dummyCoinPublicKey,
-      initRes.context.currentQueryContext.state,
-      privateState
+      { currentSecretKey: OWNER_SK }
     );
   });
 
   it('should let the contract circuit directly reject mint executed by a non-owner', () => {
+    circuitContext.currentPrivateState = { currentSecretKey: NON_OWNER_SK };
     expect(() => {
-      contract.circuits.mint(circuitContext, NON_OWNER, RECIPIENT, 1000n);
-    }).toThrow('FungibleToken: caller is not the owner');
+      contract.circuits.mint(circuitContext, RECIPIENT, 1000n);
+    }).toThrow('FungibleToken: caller authorization failed');
   });
 
-  it('should let the contract circuit directly reject burn executed by a non-owner', () => {
+  it('should let the contract circuit directly reject burn executed with mismatching key', () => {
+    circuitContext.currentPrivateState = { currentSecretKey: NON_OWNER_SK };
     expect(() => {
-      contract.circuits.burn(circuitContext, NON_OWNER, 500n);
-    }).toThrow('FungibleToken: caller is not the owner');
+      contract.circuits.burn(circuitContext, OWNER, 500n);
+    }).toThrow('FungibleToken: caller authorization failed');
   });
 
   it('should let the contract circuit directly reject transferFrom without sufficient allowance', () => {
+    circuitContext.currentPrivateState = { currentSecretKey: NON_OWNER_SK };
     expect(() => {
       contract.circuits.transferFrom(circuitContext, NON_OWNER, OWNER, RECIPIENT, 100n);
     }).toThrow('FungibleToken: insufficient allowance');
   });
 
   it('should succeed when owner executes mint and burn circuits', () => {
-    const mintRes = contract.circuits.mint(circuitContext, OWNER, OWNER, 2000n);
+    circuitContext.currentPrivateState = { currentSecretKey: OWNER_SK };
+    const mintRes = contract.circuits.mint(circuitContext, OWNER, 2000n);
     expect(mintRes.result).toBe(true);
 
     circuitContext = CompactRuntime.createCircuitContext(
       dummyContractAddress,
       dummyCoinPublicKey,
       mintRes.context.currentQueryContext.state,
-      privateState
+      { currentSecretKey: OWNER_SK }
     );
 
     const burnRes = contract.circuits.burn(circuitContext, OWNER, 500n);

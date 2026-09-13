@@ -36,7 +36,12 @@ pnpm-debug.log*
 /coverage
 
 # Contract artifact bundles
+fungible.token.v2/
+fungible.token.v2.1/
+fungible.token.v2.2/
+fungible-token.v2/
+fungible.token-v2.1/
+fungible.token-v2.2/
 fungible-token-v2/
 fungible-token-v2.1/
-fungible-token.v2/
-fungible.token.v2.1/
+fungible-token-v2.2/

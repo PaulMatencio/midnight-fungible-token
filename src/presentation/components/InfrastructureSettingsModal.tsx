@@ -90,10 +90,36 @@ export const InfrastructureSettingsModal: React.FC<InfrastructureSettingsModalPr
     setTimeout(() => setCopiedContract(false), 2000);
   };
 
-  const handleResetContractToDefault = () => {
+  const handleResetContractToDefault = async () => {
+    try {
+      const res = await fetch('/api/deployment', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.deployment?.contractAddress) {
+          const freshAddr = data.deployment.contractAddress;
+          const freshSalt = data.deployment.contractSalt;
+          setFormData((prev) => ({
+            ...prev,
+            contractAddress: freshAddr,
+            ...(freshSalt ? { contractSalt: freshSalt } : {}),
+          }));
+          setHasChanges(true);
+          showToast(
+            'info',
+            'Contract Address Reloaded',
+            `Reloaded ${freshAddr.slice(0, 10)}... from deployment file.`
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to fetch from /api/deployment:', e);
+    }
+
     const defaultAddr = PRESET_CONFIGS.preprod.contractAddress;
     setFormData((prev) => ({ ...prev, contractAddress: defaultAddr }));
     setHasChanges(true);
+    showToast('info', 'Contract Address Reset', `Reset to default: ${defaultAddr.slice(0, 10)}...`);
   };
 
   const handleSave = () => {
@@ -117,12 +143,12 @@ export const InfrastructureSettingsModal: React.FC<InfrastructureSettingsModalPr
     onClose();
   };
 
-  const handleResetAll = () => {
-    resetToDefaults();
-    setFormData(PRESET_CONFIGS.preprod);
+  const handleResetAll = async () => {
+    const fresh = await resetToDefaults();
+    setFormData(fresh || PRESET_CONFIGS.preprod);
     setSelectedPreset('preprod');
     setHasChanges(false);
-    showToast('info', 'Reset to Defaults', 'Restored default Preprod infrastructure endpoints.');
+    showToast('info', 'Reset to Defaults', 'Reloaded default deployment configuration from disk.');
   };
 
   return (

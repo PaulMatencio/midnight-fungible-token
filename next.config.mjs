@@ -4,6 +4,7 @@ import path from 'path';
 const nextConfig = {
   serverExternalPackages: [
     '@midnight-ntwrk/compact-runtime',
+    '@midnight-ntwrk/ledger-v8',
     '@midnight-ntwrk/midnight-js-contracts',
     '@midnight-ntwrk/midnight-js-http-client-proof-provider',
     '@midnight-ntwrk/midnight-js-indexer-public-data-provider',
