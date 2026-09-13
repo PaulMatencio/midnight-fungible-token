@@ -31,11 +31,10 @@ pnpm-debug.log*
 .vscode/
 *.swp
 *.swo
-
+ 
 # Vitest Coverage
 /coverage
-
+deployment.config.json
 # Contract artifact bundles
-fungible.token.v2/
-fungible.token.v2.3/
-fungible-token.v2.3/
+/fungible-token-v2/
+/fungible-token-v2.3/
