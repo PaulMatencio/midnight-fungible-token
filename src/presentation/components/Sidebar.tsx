@@ -40,6 +40,7 @@ interface SidebarProps {
   onToggleCollapseDesktop: () => void;
   onOpenSettings: () => void;
   onOpenWalletModal: () => void;
+  isOwner?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -51,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapseDesktop,
   onOpenSettings,
   onOpenWalletModal,
+  isOwner = true,
 }) => {
   const {
     mode,
@@ -77,18 +79,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const navItems = [
-    {
-      id: 'dashboard' as ActiveNavTab,
-      label: 'Executive Dashboard',
-      subtext: 'KPIs, Supply & Charts',
-      icon: LayoutDashboard,
-      color: 'text-cyan-500 dark:text-cyan-400',
-      bg: 'group-hover:bg-cyan-500/10',
-    },
+    ...(isOwner
+      ? [
+          {
+            id: 'dashboard' as ActiveNavTab,
+            label: 'Executive Dashboard',
+            subtext: 'KPIs, Supply & Charts',
+            icon: LayoutDashboard,
+            color: 'text-cyan-500 dark:text-cyan-400',
+            bg: 'group-hover:bg-cyan-500/10',
+          },
+        ]
+      : []),
     {
       id: 'actions' as ActiveNavTab,
       label: 'Circuits & Actions',
-      subtext: 'Mint, Transfer, Burn',
+      subtext: isOwner ? 'Mint, Transfer, Burn' : 'Send & Allowances',
       icon: Zap,
       color: 'text-amber-500 dark:text-amber-400',
       bg: 'group-hover:bg-amber-500/10',
@@ -144,11 +150,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
 
-        {/* Mobile Close Button */}
+        {/* Mobile / Tablet Close Button */}
         <button
           type="button"
           onClick={onCloseMobile}
-          className="md:hidden p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
+          className="lg:hidden p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -157,7 +163,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           onClick={onToggleCollapseDesktop}
-          className="hidden md:flex p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
+          className="hidden lg:flex p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
           title={isCollapsedDesktop ? 'Expand Sidebar' : 'Collapse Sidebar'}
         >
           {isCollapsedDesktop ? (
@@ -214,26 +220,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
 
-        {/* Settings Action Button in nav */}
-        <button
-          type="button"
-          onClick={() => {
-            onOpenSettings();
-            onCloseMobile();
-          }}
-          title="Infrastructure Settings"
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-transparent"
-        >
-          <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900 text-cyan-600 dark:text-cyan-400 group-hover:bg-cyan-500/10">
-            <Settings className="w-4 h-4" />
-          </div>
-          {(!isCollapsedDesktop || isOpenMobile) && (
-            <div className="overflow-hidden flex-1">
-              <div className="font-semibold text-xs text-slate-900 dark:text-white truncate">Settings & Config</div>
-              <div className="text-[10px] text-slate-500 truncate">Endpoints & Live Probes</div>
+        {/* Settings Action Button in nav (Owner only) */}
+        {isOwner && (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenSettings();
+              onCloseMobile();
+            }}
+            title="Infrastructure Settings"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-transparent"
+          >
+            <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900 text-cyan-600 dark:text-cyan-400 group-hover:bg-cyan-500/10">
+              <Settings className="w-4 h-4" />
             </div>
-          )}
-        </button>
+            {(!isCollapsedDesktop || isOpenMobile) && (
+              <div className="overflow-hidden flex-1">
+                <div className="font-semibold text-xs text-slate-900 dark:text-white truncate">Settings & Config</div>
+                <div className="text-[10px] text-slate-500 truncate">Endpoints & Live Probes</div>
+              </div>
+            )}
+          </button>
+        )}
 
         {/* Theme Toggle Button in nav */}
         <button
@@ -385,17 +393,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Mobile Slide-over Drawer Backdrop */}
+      {/* Mobile / Tablet Slide-over Drawer Backdrop */}
       {isOpenMobile && (
         <div
-          className="fixed inset-0 z-40 bg-slate-900/50 dark:bg-slate-950/80 backdrop-blur-sm md:hidden transition-opacity"
+          className="fixed inset-0 z-40 bg-slate-900/50 dark:bg-slate-950/80 backdrop-blur-sm lg:hidden transition-opacity"
           onClick={onCloseMobile}
         />
       )}
 
-      {/* Mobile Slide-over Drawer */}
+      {/* Mobile / Tablet Slide-over Drawer */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-72 md:hidden transform transition-transform duration-300 ease-in-out ${
+        className={`fixed inset-y-0 left-0 z-50 w-72 lg:hidden transform transition-transform duration-300 ease-in-out ${
           isOpenMobile ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -404,7 +412,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Desktop Fixed Sidebar */}
       <aside
-        className={`hidden md:block flex-shrink-0 transition-all duration-300 sticky top-0 h-screen z-30 ${
+        className={`hidden lg:block flex-shrink-0 transition-all duration-300 sticky top-0 h-screen z-30 ${
           isCollapsedDesktop ? 'w-20' : 'w-64'
         }`}
       >

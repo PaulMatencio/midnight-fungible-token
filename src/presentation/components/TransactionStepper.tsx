@@ -157,7 +157,7 @@ export const TransactionStepper: React.FC<TransactionStepperProps> = ({
       <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Top Header Row */}
-      <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-200 dark:border-slate-800">
+      <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-start sm:items-center gap-3.5">
           <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-gradient-to-br dark:from-cyan-500/20 dark:to-blue-500/20 border border-blue-200 dark:border-cyan-500/30 text-blue-700 dark:text-cyan-400 shadow-inner flex-shrink-0 mt-0.5 sm:mt-0">
             {status === 'confirmed' ? (
@@ -197,7 +197,7 @@ export const TransactionStepper: React.FC<TransactionStepperProps> = ({
         </div>
 
         {/* Right Info Details: Timer, Tx Hash, Dismiss Button */}
-        <div className="flex items-center gap-2 self-start md:self-center flex-wrap">
+        <div className="flex items-center gap-2 self-start lg:self-center flex-wrap">
           {/* Elapsed Duration Pill */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 text-xs font-mono text-slate-700 dark:text-slate-300 shadow-xs">
             <Clock className="w-3.5 h-3.5 text-blue-700 dark:text-cyan-400" />
@@ -234,14 +234,21 @@ export const TransactionStepper: React.FC<TransactionStepperProps> = ({
             </div>
           )}
 
-          {/* Dismiss Button */}
-          {onDismiss && (status === 'confirmed' || status === 'failed') && (
+          {/* Dismiss / Cancel Button */}
+          {onDismiss && (
             <button
               onClick={onDismiss}
-              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/60 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
-              title="Dismiss status banner"
+              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold shadow-xs"
+              title={
+                status === 'confirmed' || status === 'failed'
+                  ? 'Dismiss status banner'
+                  : 'Abort / Dismiss transaction lifecycle banner'
+              }
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
+              <span>
+                {status === 'confirmed' || status === 'failed' ? 'Dismiss' : 'Cancel / Dismiss'}
+              </span>
             </button>
           )}
         </div>

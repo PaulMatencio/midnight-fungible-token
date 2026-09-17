@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   isMidnightExtensionInstalled,
   detectInstalledWallets,
@@ -697,6 +697,93 @@ describe('Module G: Midnight Indexer Contract Query & Account Share Calculation'
   });
 });
 
+describe('Module H: Derived vs Raw Address Differentiation & Spendable Balance Precedence', () => {
+  it('should clearly distinguish between spendable derived account and raw trapped address', async () => {
+    const { resolveAccountLabel } = await import('../src/infrastructure/midnight/midnight-indexer-client');
+    const { FungibleTokenClient } = await import('../src/client/fungible-token-sdk');
+    const { addressToBytes32 } = await import('../src/domain/entities/address.vo');
+
+    const laceWalletAddress = 'mn_addr_preprod1njc3xga4cdss0nzt5mlld20294h2t6y06slu5l39h8k8aj2236ysv29648';
+    const testSalt = hexToBytes('7fed14431887b8ced99266d0d95e16bffb1e042268aa3dbfcd19b5b807fbdb64');
+
+    const rawUserBytes = addressToBytes32(laceWalletAddress);
+    const rawUserHex = bytesToHex(rawUserBytes);
+    const derivedBytes = FungibleTokenClient.deriveAccount(rawUserBytes, testSalt);
+    const derivedHex = bytesToHex(derivedBytes);
+
+    // Verify derived account matches spendable account
+    const derivedLabel = resolveAccountLabel(derivedHex, laceWalletAddress, testSalt);
+    expect(derivedLabel.isCurrentUser).toBe(true);
+    expect(derivedLabel.isRawLocked).toBe(false);
+    expect(derivedLabel.label).toBe('You (Lace Wallet)');
+
+    // Verify raw address is identified as locked/trapped
+    const rawLabel = resolveAccountLabel(rawUserHex, laceWalletAddress, testSalt);
+    expect(rawLabel.isCurrentUser).toBe(true);
+    expect(rawLabel.isRawLocked).toBe(true);
+    expect(rawLabel.label).toBe('You (Locked in Raw Address)');
+  });
+
+  it('should prioritize spendable derived balance (6500) over raw trapped balance (1000)', async () => {
+    const { MidnightTokenContractAdapter } = await import('../src/infrastructure/midnight/midnight-token-contract.adapter');
+    const { FungibleTokenClient } = await import('../src/client/fungible-token-sdk');
+    const { addressToBytes32 } = await import('../src/domain/entities/address.vo');
+
+    const laceWalletAddress = 'mn_addr_preprod1njc3xga4cdss0nzt5mlld20294h2t6y06slu5l39h8k8aj2236ysv29648';
+    const testSalt = hexToBytes('7fed14431887b8ced99266d0d95e16bffb1e042268aa3dbfcd19b5b807fbdb64');
+    const rawUserBytes = addressToBytes32(laceWalletAddress);
+    const derivedBytes = FungibleTokenClient.deriveAccount(rawUserBytes, testSalt);
+
+    const mockWalletGateway: any = {
+      getAddress: () => laceWalletAddress,
+      isConnected: () => true,
+      getMode: () => 'lace',
+    };
+    const mockIndexerGateway: any = {
+      queryContractState: async () => null,
+      queryTokensByHolder: async () => [],
+      queryBlockHeight: async () => 100,
+    };
+    const networkConfig: any = {
+      contractAddress: '1f671d56337df583a799cc8657098a1601272e63b89ca706c6894fb8c8e8714b',
+      contractSalt: bytesToHex(testSalt),
+    };
+
+    const adapter = new MidnightTokenContractAdapter(mockWalletGateway, mockIndexerGateway, networkConfig);
+
+    const balancesMap = new Map<Uint8Array, bigint>();
+    balancesMap.set(derivedBytes, 6500n);
+    balancesMap.set(rawUserBytes, 1000n);
+
+    const mockLedger: any = {
+      _balances: {
+        lookup: (key: Uint8Array) => {
+          const hexKey = bytesToHex(key);
+          if (hexKey === bytesToHex(derivedBytes)) return 6500n;
+          if (hexKey === bytesToHex(rawUserBytes)) return 1000n;
+          return 0n;
+        },
+        [Symbol.iterator]: () => balancesMap.entries(),
+      },
+    };
+
+    // Inject mock decoded ledger
+    (adapter as any).getDecodedLedger = () => mockLedger;
+
+    // getBalanceOf MUST return 6500 (spendable balance), not 1000!
+    const spendableBal = adapter.getBalanceOf(laceWalletAddress);
+    expect(spendableBal).toBe(6500n);
+
+    // getLockedBalanceOf MUST return 1000 (trapped at raw key)
+    const lockedBal = adapter.getLockedBalanceOf(laceWalletAddress);
+    expect(lockedBal).toBe(1000n);
+
+    // resolveSpendableDestination MUST resolve Bech32m address to derived account
+    const resolved = adapter.resolveSpendableDestination(laceWalletAddress);
+    expect(bytesToHex(resolved)).toBe(bytesToHex(derivedBytes));
+  });
+});
+
 describe('Module E: Smart Contract Direct Circuit Access Control Enforcement', () => {
   const dummyContractAddress = '00'.repeat(32);
   const dummyCoinPublicKey = '01'.repeat(32);
@@ -794,3 +881,147 @@ describe('Module E: Smart Contract Direct Circuit Access Control Enforcement', (
     expect(burnRes.result).toBe(true);
   });
 });
+
+describe('Module I: Automatic Derivation of Raw Wallet Addresses & Trapped Funds Prevention', () => {
+  const userBech32 = 'mn_addr_preprod1hpja5mfzyd4g8rrrueu5nt0a094lhfljx5dwzf3k6xvcuf3c2h9sh6648l';
+  const salt = hexToBytes('7fed14431887b8ced99266d0d95e16bffb1e042268aa3dbfcd19b5b807fbdb64');
+
+  it('should automatically derive spendable account for Bech32m address using contract salt', async () => {
+    const { FungibleTokenClient } = await import('../src/client/fungible-token-sdk');
+    const rawKey = addressToBytes32(userBech32);
+    expect(bytesToHex(rawKey)).toBe('b865da6d22236a838c63e67949adfd796bfba7f2351ae12636d1998e263855cb');
+
+    const derived = FungibleTokenClient.deriveAccount(rawKey, salt);
+    expect(bytesToHex(derived)).toBe('56abc12f7cc11a0fb2f4217cca218b321ed6ba2a1a8fccec76ba69c50dd76959');
+  });
+
+  it('should resolveSpendableDestination to spendable account even if raw key is in balances', async () => {
+    const { MidnightTokenContractAdapter } = await import('../src/infrastructure/midnight/midnight-token-contract.adapter');
+    const { FungibleTokenClient } = await import('../src/client/fungible-token-sdk');
+
+    const rawKey = addressToBytes32(userBech32);
+    const expectedDerived = FungibleTokenClient.deriveAccount(rawKey, salt);
+
+    // Mock wallet gateway & network config
+    const mockWalletGateway: any = {
+      getAddress: () => 'mn_addr_preprod1_other_sender...',
+      getWalletType: () => 'lace',
+    };
+    const mockNetworkConfig: any = {
+      contractAddress: '01'.repeat(32),
+      contractSalt: bytesToHex(salt),
+    };
+
+    const adapter = new MidnightTokenContractAdapter({ walletGateway: mockWalletGateway, networkConfig: mockNetworkConfig });
+
+    // Mock decoded ledger containing both the spendable account AND the trapped raw address
+    (adapter as any).getDecodedLedger = () => ({
+      owner: new Uint8Array(32).fill(1),
+      _balances: [
+        [rawKey, 1000n], // Trapped raw address
+        [expectedDerived, 5500n], // Spendable derived account
+      ],
+    });
+
+    // Test 1: When passing Bech32m string
+    const targetFromString = adapter.resolveSpendableDestination(userBech32);
+    expect(bytesToHex(targetFromString)).toBe(bytesToHex(expectedDerived));
+
+    // Test 2: When passing raw Uint8Array, it recognizes that deriving it produces an on-chain balance!
+    const targetFromBytes = adapter.resolveSpendableDestination(rawKey);
+    expect(bytesToHex(targetFromBytes)).toBe(bytesToHex(expectedDerived));
+  });
+
+  it('TransferTokenUseCase should pass recipient directly to gateway without stripping string', async () => {
+    const { TransferTokenUseCase } = await import('../src/application/use-cases/transfer-token.usecase');
+
+    let passedRecipient: any = null;
+    const mockGateway: any = {
+      getBalanceOf: () => 10_000n,
+      transfer: async (_addr: string, recipient: any, _amount: bigint) => {
+        passedRecipient = recipient;
+        return { txHash: '0x123' };
+      },
+    };
+
+    const useCase = new TransferTokenUseCase(mockGateway);
+    await useCase.execute({
+      contractAddress: '01'.repeat(32),
+      recipient: userBech32,
+      amount: 1000n,
+    });
+
+    expect(passedRecipient).toBe(userBech32);
+  });
+});
+
+describe('Module J: Reverse Spender Allowance Lookup (Owners who granted allowance)', () => {
+  it('should find all owners who granted an allowance to a spender', async () => {
+    const { MidnightTokenContractAdapter } = await import(
+      '../src/infrastructure/midnight/midnight-token-contract.adapter'
+    );
+    const { hexToBytes, bytesToHex } = await import('../src/domain/entities/address.vo');
+
+    const testContract = '1f671d56337df583a799cc8657098a1601272e63b89ca706c6894fb8c8e8714b';
+    const testSalt = hexToBytes('7fed14431887b8ced99266d0d95e16bffb1e042268aa3dbfcd19b5b807fbdb64');
+
+    const ownerA = hexToBytes('56abc12f7cc11a0fb2f4217cca218b321ed6ba2a1a8fccec76ba69c50dd76959');
+    const ownerB = hexToBytes('1111111111111111111111111111111111111111111111111111111111111111');
+    const spenderTarget = hexToBytes('87cdef7f9de1dbac038f429dd2e8bfbc2fccf4b0cae2b613b7612c5c1546949d');
+    const otherSpender = hexToBytes('9999999999999999999999999999999999999999999999999999999999999999');
+
+    // Create allowances map
+    const allowancesList: [[Uint8Array, Uint8Array], bigint][] = [
+      [[ownerA, spenderTarget], 1000_000_000n],
+      [[ownerB, spenderTarget], 500_000_000n],
+      [[ownerA, otherSpender], 2000_000_000n],
+    ];
+
+    const mockStorage: any = {
+      loadState: () => ({
+        data: '00',
+        blockHeight: 1,
+        txHash: '0x0',
+      }),
+    };
+
+    const adapter = new MidnightTokenContractAdapter({
+      walletGateway: {} as any,
+      stateStorage: mockStorage,
+      networkConfig: {
+        contractAddress: testContract,
+        networkId: 'undeployed',
+      },
+    });
+
+    // Mock getDecodedLedger and resolveContractSalt
+    (adapter as any).getDecodedLedger = vi.fn().mockReturnValue({
+      _allowances: {
+        [Symbol.iterator]: () => allowancesList.values(),
+        lookup: ([o, s]: [Uint8Array, Uint8Array]) => {
+          const match = allowancesList.find(
+            ([[mo, ms]]) => bytesToHex(mo) === bytesToHex(o) && bytesToHex(ms) === bytesToHex(s)
+          );
+          return match ? match[1] : 0n;
+        },
+      },
+    });
+    (adapter as any).resolveContractSalt = vi.fn().mockReturnValue(testSalt);
+
+    // Query allowances for spenderTarget
+    const granted = adapter.getAllowancesForSpender(bytesToHex(spenderTarget), testContract);
+
+    expect(granted).toHaveLength(2);
+    // Highest allowance first
+    expect(granted[0].ownerAccount).toBe(bytesToHex(ownerA));
+    expect(granted[0].allowance).toBe(1000_000_000n);
+
+    expect(granted[1].ownerAccount).toBe(bytesToHex(ownerB));
+    expect(granted[1].allowance).toBe(500_000_000n);
+
+    // Other spender should not bleed into spenderTarget
+    expect(granted.find((g) => g.allowance === 2000_000_000n)).toBeUndefined();
+  });
+});
+
+

@@ -148,7 +148,7 @@ export const AccountSharesViewer: React.FC<AccountSharesViewerProps> = ({
       </div>
 
       {/* Indexer Metadata Banner */}
-      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400 font-mono">
+      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400 font-mono">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-1.5">
             <Server className="w-3.5 h-3.5 text-green-700 dark:text-emerald-400" />
@@ -372,17 +372,26 @@ export const AccountSharesViewer: React.FC<AccountSharesViewerProps> = ({
                 const isCopied = copiedIndex === idx;
                 const addr =
                   displayFormat === 'bech32' ? holder.addressBech32 : holder.addressHex;
-                const isCurrent = Boolean(
-                  holder.isCurrentUser ||
-                  (userDerivedAddressHex && holder.addressHex.toLowerCase() === userDerivedAddressHex.toLowerCase()) ||
+                const isRawLocked = Boolean(
+                  holder.isRawLocked ||
                   (currentUserAddress && (
                     holder.addressHex.toLowerCase() === currentUserAddress.toLowerCase().replace(/^0x/, '') ||
                     holder.addressBech32.toLowerCase() === currentUserAddress.toLowerCase()
+                  ) && (
+                    userDerivedAddressHex &&
+                    holder.addressHex.toLowerCase() !== userDerivedAddressHex.toLowerCase()
                   ))
                 );
 
+                const isSpendable = Boolean(
+                  (userDerivedAddressHex && holder.addressHex.toLowerCase() === userDerivedAddressHex.toLowerCase()) ||
+                  (holder.isCurrentUser && !holder.isRawLocked)
+                );
+
+                const isCurrent = isSpendable || isRawLocked;
+
                 return (
-                  <tr key={holder.addressHex} className={`hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors ${isCurrent ? 'bg-blue-50/80 dark:bg-cyan-950/10' : ''}`}>
+                  <tr key={holder.addressHex} className={`hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors ${isSpendable ? 'bg-blue-50/80 dark:bg-cyan-950/10' : isRawLocked ? 'bg-amber-50/80 dark:bg-amber-950/10' : ''}`}>
                     {/* Rank */}
                     <td className="py-3 px-3.5 text-center font-mono font-bold text-slate-500 dark:text-slate-400">
                       #{idx + 1}
@@ -416,10 +425,16 @@ export const AccountSharesViewer: React.FC<AccountSharesViewerProps> = ({
 
                           {/* Badges */}
                           <div className="flex items-center gap-1">
-                            {isCurrent && (
+                            {isSpendable && (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-cyan-500/20 text-blue-900 dark:text-cyan-300 border border-blue-200 dark:border-cyan-500/30 flex items-center gap-1 shadow-sm">
                                 <Sparkles className="w-2.5 h-2.5 text-blue-700 dark:text-cyan-400" />
-                                You (Lace Wallet)
+                                You (Spendable Account)
+                              </span>
+                            )}
+                            {isRawLocked && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30 flex items-center gap-1 shadow-sm">
+                                <Lock className="w-2.5 h-2.5 text-amber-700 dark:text-amber-400" />
+                                You (Locked in Raw Address)
                               </span>
                             )}
                             {holder.isOwner && (
@@ -437,9 +452,9 @@ export const AccountSharesViewer: React.FC<AccountSharesViewerProps> = ({
                         </div>
 
                         {/* Explicit Mapping Note */}
-                        {isCurrent && (currentUserAddress || holder.mappedWalletAddress) && (
+                        {isSpendable && (currentUserAddress || holder.mappedWalletAddress) && (
                           <div className="text-[10px] text-blue-800 dark:text-cyan-400/90 font-mono flex items-center gap-1.5 pl-0.5">
-                            <span className="text-blue-900 dark:text-cyan-400 font-semibold">↳ Mapped to Lace Wallet:</span>
+                            <span className="text-blue-900 dark:text-cyan-400 font-semibold">↳ Spendable by Lace Wallet:</span>
                             <span
                               className="text-slate-600 dark:text-slate-300 truncate max-w-[200px] sm:max-w-[360px]"
                               title={currentUserAddress || holder.mappedWalletAddress}
@@ -448,6 +463,15 @@ export const AccountSharesViewer: React.FC<AccountSharesViewerProps> = ({
                                 const raw = currentUserAddress || holder.mappedWalletAddress || '';
                                 return raw.length > 22 ? `${raw.slice(0, 14)}...${raw.slice(-8)}` : raw;
                               })()}
+                            </span>
+                          </div>
+                        )}
+
+                        {isRawLocked && (
+                          <div className="text-[10px] text-amber-800 dark:text-amber-300/90 font-mono flex items-center gap-1.5 pl-0.5">
+                            <span className="text-amber-900 dark:text-amber-400 font-semibold">⚠️ Locked at Raw Address:</span>
+                            <span className="text-slate-600 dark:text-slate-300">
+                              Tokens at un-derived key cannot be spent directly. Use Admin Reallocate to move to your Spendable Account.
                             </span>
                           </div>
                         )}

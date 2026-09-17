@@ -117,13 +117,59 @@ export async function POST(req: NextRequest) {
   }
 }
 
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { id, updates } = body;
+    if (!id || !updates || typeof updates !== 'object') {
+      return NextResponse.json({ success: false, error: 'Missing id or updates' }, { status: 400 });
+    }
+    const existing = ensureDataFile();
+    const updated = existing.map((item) =>
+      item.id === id ? { ...item, ...updates } : item
+    );
+    writeDataFile(updated);
+    return NextResponse.json({ success: true, count: updated.length, activities: updated });
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: error?.message || 'Failed to update activity' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const contractAddress = searchParams.get('contractAddress');
+    const id = searchParams.get('id');
+    const clearPendingOnly = searchParams.get('pending') === 'true';
+
+    let existing = ensureDataFile();
+
+    if (id) {
+      const filtered = existing.filter((item) => item.id !== id);
+      writeDataFile(filtered);
+      return NextResponse.json({
+        success: true,
+        count: filtered.length,
+        activities: filtered,
+        message: `Activity ${id} deleted`,
+      });
+    }
+
+    if (clearPendingOnly) {
+      const filtered = existing.filter((item) => item.status !== 'pending');
+      writeDataFile(filtered);
+      return NextResponse.json({
+        success: true,
+        count: filtered.length,
+        activities: filtered,
+        message: 'All pending activities cleared',
+      });
+    }
 
     if (contractAddress) {
-      const existing = ensureDataFile();
       const filtered = existing.filter(
         (item) => item.contractAddress?.toLowerCase() !== contractAddress.toLowerCase()
       );

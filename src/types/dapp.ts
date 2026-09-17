@@ -1,67 +1,22 @@
 /**
  * DApp Data Transfer Objects & Type Definitions
+ * Re-exported from Domain Layer for unified typing and backward compatibility.
  */
 
-export type TransactionStatus =
-  | 'idle'
-  | 'preparing'
-  | 'proving'
-  | 'signing'
-  | 'submitting'
-  | 'confirmed'
-  | 'failed';
+export type {
+  TransactionStatus,
+  ActivityItem,
+} from '@/src/domain/entities/activity.entity';
 
-export interface ActivityItem {
-  id: string;
-  circuitName: string;
-  params: Record<string, string>;
-  status: 'pending' | 'confirmed' | 'failed';
-  txHash?: string;
-  blockHeight?: number;
-  timestamp: number;
-  error?: string;
-  caller?: string;
-  contractAddress?: string;
-  networkId?: string;
-  mode?: 'lace' | 'test';
-  durationMs?: number;
-}
+export type {
+  WalletIdentity,
+  WalletBalances,
+  WalletMode,
+  NetworkConfig,
+} from '@/src/domain/entities/wallet.entity';
 
-export interface WalletIdentity {
-  name: string;
-  label: string;
-  addressHex: string;
-  role: 'user' | 'admin';
-}
-
-export interface NetworkConfig {
-  contractName: string;
-  contractAddress: string;
-  contractSalt?: string;
-  ownerSecretKey?: string;
-  owner?: string;
-  networkId: string;
-  indexerUrl: string;
-  indexerWsUrl: string;
-  nodeUrl: string;
-  proofServerUrl: string;
-  faucetUrl: string;
-  explorerUrl: string;
-}
-
-export interface TokenMetadata {
-  name: string;
-  symbol: string;
-  decimals: number;
-  totalSupply: bigint;
-  maxSupply?: bigint;
-  contractSalt?: string;
-  isInitialized: boolean;
-  isPaused?: boolean;
-  owner?: string;
-  ownerBech32?: string;
-  emergencyPauser?: string;
-  emergencyPauserBech32?: string;
-  isCallerOwner?: boolean;
-  isCallerPauser?: boolean;
-}
+export type {
+  TokenMetadata,
+  AccountShare,
+  HoldersReport,
+} from '@/src/domain/entities/token.entity';

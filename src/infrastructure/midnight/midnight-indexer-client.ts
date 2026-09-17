@@ -19,6 +19,7 @@ export interface AccountShare {
   formattedBalance: string;
   sharePercentage: number; // 0 - 100
   isCurrentUser?: boolean;
+  isRawLocked?: boolean;
   isOwner?: boolean;
   label?: string;
   mappedWalletAddress?: string; // Optional: raw connected Lace address mapped to this derived account
@@ -186,39 +187,45 @@ export function resolveAccountLabel(
   addressHex: string,
   currentUserAddress?: string | null,
   contractSalt?: Uint8Array | string
-): { label?: string; isCurrentUser: boolean; mappedWalletAddress?: string } {
+): { label?: string; isCurrentUser: boolean; isRawLocked?: boolean; mappedWalletAddress?: string } {
   const cleanHex = addressHex.toLowerCase().replace(/^0x/, '');
   const cleanUser = (currentUserAddress || '').toLowerCase().replace(/^0x/, '');
 
   let isCurrentUser = false;
+  let isRawLocked = false;
 
   if (cleanUser) {
-    // 1. Direct hex match
-    if (cleanUser === cleanHex) {
-      isCurrentUser = true;
-    }
-    // 2. Bech32m direct match
-    else if (cleanUser.startsWith('mn_') && formatBech32Address(cleanHex).toLowerCase() === cleanUser) {
-      isCurrentUser = true;
-    }
-    // 3. Derived account match (the on-chain holder account was derived from the raw Lace wallet)
-    else {
-      try {
-        const userBytes = addressToBytes32(currentUserAddress!);
-        const rawUserHex = bytesToHex(userBytes).toLowerCase();
-        if (cleanHex === rawUserHex) {
-          isCurrentUser = true;
-        } else {
-          // Derive on-chain spendable account identity
-          const salt = contractSalt ?? MIDNIGHT_CONFIG.contractSalt ?? new Uint8Array(32).fill(42);
-          const derived = FungibleTokenClient.deriveAccount(userBytes, salt);
-          const derivedHex = bytesToHex(derived).toLowerCase();
-          if (cleanHex === derivedHex) {
-            isCurrentUser = true;
-          }
-        }
-      } catch {
-        // Safe fallback
+    try {
+      const userBytes = addressToBytes32(currentUserAddress!);
+      const rawUserHex = bytesToHex(userBytes).toLowerCase();
+      const salt = contractSalt ?? MIDNIGHT_CONFIG.contractSalt ?? new Uint8Array(32).fill(42);
+      const derived = FungibleTokenClient.deriveAccount(userBytes, salt);
+      const derivedHex = bytesToHex(derived).toLowerCase();
+
+      // 1. Derived spendable account match
+      if (cleanHex === derivedHex) {
+        isCurrentUser = true;
+        isRawLocked = false;
+      }
+      // 2. Direct raw wallet address match (tokens locked at raw un-derived address)
+      else if (
+        cleanHex === rawUserHex ||
+        cleanUser === cleanHex ||
+        (cleanUser.startsWith('mn_') && formatBech32Address(cleanHex).toLowerCase() === cleanUser)
+      ) {
+        isCurrentUser = true;
+        // In Lace mode, the user's active address is a Bech32m string (e.g. mn_addr_...).
+        // If an on-chain account matches the raw key instead of the derived account, it is locked.
+        isRawLocked = Boolean(currentUserAddress && (
+          currentUserAddress.toLowerCase().startsWith('mn_') ||
+          currentUserAddress.toLowerCase().startsWith('midnight')
+        ));
+      }
+    } catch {
+      // Safe fallback
+      if (cleanUser === cleanHex) {
+        isCurrentUser = true;
+        isRawLocked = false;
       }
     }
   }
@@ -241,18 +248,27 @@ export function resolveAccountLabel(
     : undefined;
 
   if (isCurrentUser) {
+    if (isRawLocked) {
+      return {
+        label: formattedPresetName ? `${formattedPresetName} (Locked in Raw Address)` : 'You (Locked in Raw Address)',
+        isCurrentUser: true,
+        isRawLocked: true,
+        mappedWalletAddress: currentUserAddress || undefined,
+      };
+    }
     return {
       label: formattedPresetName ? `${formattedPresetName} (You)` : 'You (Lace Wallet)',
       isCurrentUser: true,
+      isRawLocked: false,
       mappedWalletAddress: currentUserAddress || undefined,
     };
   }
 
   if (formattedPresetName) {
-    return { label: formattedPresetName, isCurrentUser: false };
+    return { label: formattedPresetName, isCurrentUser: false, isRawLocked: false };
   }
 
-  return { label: undefined, isCurrentUser: false };
+  return { label: undefined, isCurrentUser: false, isRawLocked: false };
 }
 
 /**
@@ -280,7 +296,7 @@ export function calculateAccountSharesFromLedger(
     for (const [accountBytes, balance] of ledgerState._balances) {
       const addressHex = bytesToHex(accountBytes);
       const addressBech32 = formatBech32Address(accountBytes, options?.networkId);
-      const { label, isCurrentUser, mappedWalletAddress } = resolveAccountLabel(
+      const { label, isCurrentUser, isRawLocked, mappedWalletAddress } = resolveAccountLabel(
         addressHex,
         options?.currentUserAddress,
         options?.contractSalt
@@ -297,6 +313,7 @@ export function calculateAccountSharesFromLedger(
         formattedBalance: formatTokenAmount(balance, decimals),
         sharePercentage,
         isCurrentUser,
+        isRawLocked,
         isOwner,
         label: isOwner ? (label ? `${label} (Owner)` : 'Contract Owner') : label,
         mappedWalletAddress,
@@ -323,7 +340,13 @@ export function calculateAccountSharesFromLedger(
     decimals,
     totalSupply,
     formattedTotalSupply: formatTokenAmount(totalSupply, decimals),
-    isInitialized: Boolean((ledgerState as any)._isInitialized ?? (ledgerState.owner && !ledgerState.owner.every((b: number) => b === 0))),
+    isInitialized: Boolean(
+      (ledgerState as any)._isInitialized ??
+      (ledgerState.owner &&
+        (typeof ledgerState.owner === 'string'
+          ? !/^0+$/.test(String(ledgerState.owner).replace(/^0x/, ''))
+          : Array.from(ledgerState.owner as any).some((b: any) => b !== 0)))
+    ),
     owner: ownerHex,
     ownerBech32: ownerBech32,
     holders,

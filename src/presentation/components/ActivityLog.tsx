@@ -31,25 +31,82 @@ import {
   User,
   Terminal,
   RefreshCw,
+  X,
+  Layers,
+  Wallet,
 } from 'lucide-react';
 import { getExplorerTxUrl, getExplorerContractUrl } from '@/src/infrastructure/config/midnight-config';
 import { queryTransactionOnChain, type OnChainTxVerification } from '@/src/infrastructure/midnight/midnight-indexer-client';
+import { addressToHex32 } from '@/src/domain/entities/address.vo';
 import type { ActivityItem } from '@/src/types/dapp';
 
 interface ActivityLogProps {
   activities: ActivityItem[];
   activeContractAddress?: string;
+  currentUserAddress?: string | null;
+  userDerivedAddressHex?: string;
+  isOwner?: boolean;
   onClearActivities?: () => void;
+  onDismissActivity?: (id: string) => void;
+  onClearPendingActivities?: () => void;
+}
+
+/**
+ * Determines whether an activity belongs to the connected wallet.
+ * Checks both:
+ * 1. Raw account address (Bech32m string or 32-byte raw hex)
+ * 2. Derived account address (contract-specific 32-byte salt derivation)
+ */
+export function isActivityForUser(
+  activity: ActivityItem,
+  userAddress?: string | null,
+  userDerivedHex?: string | null
+): boolean {
+  if (!userAddress && !userDerivedHex) return false;
+
+  const userBech32 = (userAddress || '').toLowerCase().trim();
+  let rawHex = '';
+  if (userAddress) {
+    try {
+      rawHex = addressToHex32(userAddress).toLowerCase().replace(/^0x/, '');
+    } catch {
+      rawHex = userAddress.toLowerCase().replace(/^0x/, '');
+    }
+  }
+  const derivedHex = (userDerivedHex || '').toLowerCase().replace(/^0x/, '').trim();
+
+  // 1. Check direct caller match
+  const caller = (activity.caller || '').toLowerCase().trim();
+  const cleanCaller = caller.replace(/^0x/, '');
+
+  if (userBech32 && caller === userBech32) return true;
+  if (rawHex && (cleanCaller === rawHex || caller.includes(rawHex))) return true;
+  if (derivedHex && (cleanCaller === derivedHex || caller.includes(derivedHex))) return true;
+
+  // 2. Check activity parameters (to, recipient, spender, owner, targetAccount)
+  if (activity.params && typeof activity.params === 'object') {
+    const paramsStr = JSON.stringify(activity.params).toLowerCase();
+    if (userBech32 && paramsStr.includes(userBech32)) return true;
+    if (rawHex && paramsStr.includes(rawHex)) return true;
+    if (derivedHex && paramsStr.includes(derivedHex)) return true;
+  }
+
+  return false;
 }
 
 export const ActivityLog: React.FC<ActivityLogProps> = ({
   activities,
   activeContractAddress,
+  currentUserAddress,
+  userDerivedAddressHex,
+  isOwner = true,
   onClearActivities,
+  onDismissActivity,
+  onClearPendingActivities,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'failed'>('all');
-  const [scopeFilter, setScopeFilter] = useState<'current' | 'all'>('all');
+  const [scopeFilter, setScopeFilter] = useState<'mine' | 'all'>('mine');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -140,15 +197,31 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
     }
   };
 
-  // Scope filter: filter by current contract address if active
+  // Scope filter: MUST be filtered by the connected Lace wallet (derived or raw account address).
+  // It MUST be empty if there is no connected account.
   const scopedActivities = useMemo(() => {
-    if (scopeFilter === 'all' || !activeContractAddress) {
-      return activities;
+    // 1. If there is no connected account, the log MUST be empty
+    if (!currentUserAddress && !userDerivedAddressHex) {
+      return [];
     }
-    return activities.filter(
-      (a) => !a.contractAddress || a.contractAddress.toLowerCase() === activeContractAddress.toLowerCase()
+
+    // 2. Filter by current active contract if specified
+    const contractActivities = activeContractAddress
+      ? activities.filter(
+          (a) => !a.contractAddress || a.contractAddress.toLowerCase() === activeContractAddress.toLowerCase()
+        )
+      : activities;
+
+    // 3. If owner explicitly selected 'all' scopes, show full contract history
+    if (isOwner && scopeFilter === 'all') {
+      return contractActivities;
+    }
+
+    // 4. Default & strict: filter exclusively by the connected Lace wallet (raw or derived)
+    return contractActivities.filter((a) =>
+      isActivityForUser(a, currentUserAddress, userDerivedAddressHex)
     );
-  }, [activities, scopeFilter, activeContractAddress]);
+  }, [activities, scopeFilter, activeContractAddress, currentUserAddress, userDerivedAddressHex, isOwner]);
 
   // Search and status filter
   const filteredActivities = useMemo(() => {
@@ -344,7 +417,7 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
             </button>
           </div>
 
-          {onClearActivities && (
+          {onClearActivities && isOwner && (
             <button
               onClick={() => setShowClearConfirm(true)}
               disabled={activities.length === 0}
@@ -477,9 +550,9 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
       </div>
 
       {/* Scope, Filter, & Search Bar */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
         {/* Status Filter Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 text-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 text-xs">
           <button
             onClick={() => setStatusFilter('all')}
             className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap ${
@@ -523,63 +596,87 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
             <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
             Failed ({stats.failed})
           </button>
+
+          {stats.pending > 0 && onClearPendingActivities && (
+            <button
+              onClick={onClearPendingActivities}
+              className="px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs text-amber-300 hover:text-white bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 shadow-xs"
+              title="End and dismiss all pending transactions"
+            >
+              <X className="w-3.5 h-3.5 text-amber-400" />
+              End All Pending ({stats.pending})
+            </button>
+          )}
         </div>
 
         {/* Right side: Search & Scope */}
         <div className="flex items-center gap-2">
-          {activeContractAddress && (
+          {/* Scope Selector: Only show toggle if connected and owner */}
+          {(currentUserAddress || userDerivedAddressHex) && isOwner && (
             <div className="flex items-center bg-slate-950/80 border border-slate-800 rounded-xl p-1 text-[11px] font-semibold">
               <button
-                onClick={() => setScopeFilter('current')}
+                onClick={() => setScopeFilter('mine')}
                 className={`px-2 py-1 rounded-lg transition-colors cursor-pointer ${
-                  scopeFilter === 'current'
-                    ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
+                  scopeFilter === 'mine'
+                    ? 'bg-blue-600 text-white shadow-xs'
                     : 'text-slate-400 hover:text-white'
                 }`}
+                title="Only transactions belonging to this connected Lace wallet"
               >
-                Current Contract
+                My Wallet ({stats.total})
               </button>
               <button
                 onClick={() => setScopeFilter('all')}
                 className={`px-2 py-1 rounded-lg transition-colors cursor-pointer ${
                   scopeFilter === 'all'
-                    ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
+                    ? 'bg-blue-600 text-white shadow-xs'
                     : 'text-slate-400 hover:text-white'
                 }`}
+                title="View all contract events across all accounts (Owner only)"
               >
-                All History
+                All Contract Scopes
               </button>
             </div>
           )}
 
-          <div className="relative flex-1 sm:w-60">
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+          {/* Search Box */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search circuit, hash, address..."
-              className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 focus:border-blue-500 text-xs text-white placeholder-slate-500 focus:outline-none transition-colors"
+              placeholder="Search actions, hashes, accounts..."
+              className="pl-8 pr-3 py-1.5 bg-slate-950/60 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-hidden focus:border-blue-500/50 w-48 sm:w-64 transition-all"
             />
           </div>
         </div>
       </div>
 
-      {/* Activity List */}
-      {filteredActivities.length === 0 ? (
-        <div className="text-center py-12 rounded-xl bg-slate-950/40 border border-dashed border-slate-800/80 text-slate-500 text-xs space-y-2">
-          <Code className="w-8 h-8 mx-auto opacity-30 text-slate-400" />
-          <p className="font-semibold text-slate-400">No matching transactions or audit events</p>
-          <p className="text-[11px] text-slate-500">
-            {searchQuery || statusFilter !== 'all'
-              ? 'Try adjusting your search query or status filter.'
-              : 'Execute a circuit (Mint, Transfer, Burn) to record persistent on-chain transactions.'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filteredActivities.map((item) => {
-            const badge = getCircuitBadge(item.circuitName);
+      {/* Activities List */}
+      <div className="space-y-3">
+        {!currentUserAddress && !userDerivedAddressHex ? (
+          <div className="p-8 text-center rounded-2xl bg-slate-950/40 border border-slate-800/60 text-slate-500 space-y-3">
+            <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
+              <Wallet className="w-6 h-6 stroke-[1.5]" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-slate-300">No Connected Account</p>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                Connect your Lace wallet to view your personal transaction history and contract audit logs.
+              </p>
+            </div>
+          </div>
+        ) : filteredActivities.length === 0 ? (
+          <div className="p-8 text-center rounded-2xl bg-slate-950/40 border border-slate-800/60 text-slate-500 space-y-2">
+            <Layers className="w-8 h-8 text-slate-600 mx-auto stroke-[1.5]" />
+            <p className="text-sm font-medium">No activity found for this connected account.</p>
+            <p className="text-xs text-slate-500">
+              Transactions executed by or sent to this wallet will appear here automatically.
+            </p>
+          </div>
+        ) : (
+          filteredActivities.map((item) => {
             const isExpanded = expandedId === item.id;
             const verification = verifications[item.id];
             const isVerifying = verifyingId === item.id;
@@ -587,17 +684,22 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
             return (
               <div
                 key={item.id}
-                className="p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 transition-all space-y-3 shadow-md"
+                className="p-4 sm:p-5 rounded-2xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700/80 transition-all space-y-3 shadow-sm"
               >
-                {/* Card Top Row */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-bold border ${badge.bg}`}
-                    >
-                      {badge.icon}
-                      {item.circuitName}()
-                    </span>
+                {/* Top Row: Circuit Name, Status Badge, Mode, Timing */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-900">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(() => {
+                      const badge = getCircuitBadge(item.circuitName);
+                      return (
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs font-mono font-bold px-2.5 py-1 rounded-lg border ${badge.bg}`}
+                        >
+                          {badge.icon}
+                          {item.circuitName}()
+                        </span>
+                      );
+                    })()}
 
                     {item.status === 'confirmed' && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
@@ -613,6 +715,15 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
                         <Clock className="w-3.5 h-3.5 animate-spin" /> In Progress
                       </span>
+                    )}
+                    {item.status === 'pending' && onDismissActivity && (
+                      <button
+                        onClick={() => onDismissActivity(item.id)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-300 hover:text-rose-100 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 px-2 py-0.5 rounded-md transition-colors cursor-pointer shadow-xs"
+                        title="End this stuck transaction"
+                      >
+                        <X className="w-3 h-3 text-rose-400" /> End Transaction
+                      </button>
                     )}
                     {item.status === 'failed' && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-md">
@@ -844,9 +955,9 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({
                 )}
               </div>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
     </div>
   );
 };

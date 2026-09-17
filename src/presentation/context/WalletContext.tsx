@@ -41,6 +41,7 @@ export interface WalletContextType {
   connectWallet: (walletName?: string) => Promise<void>;
   reconnectWallet: (walletName?: string) => Promise<void>;
   disconnectWallet: () => void;
+  resetWalletSession: () => void;
   selectPresetIdentity: (identity: WalletIdentity) => void;
   refreshBalances: () => Promise<void>;
 }
@@ -126,6 +127,9 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (!isMidnightExtensionInstalled()) {
         console.log('[WalletContext] Lace extension not present for auto-reconnect.');
         isAutoReconnectingRef.current = false;
+        setIsConnected(false);
+        setAccountAddress(null);
+        setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
         return;
       }
 
@@ -169,19 +173,23 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setStorageItem(STORAGE_KEYS.TNIGHT_BALANCE, balances.tNightBalance);
         }
         console.log('[WalletContext] Auto-reconnected to Lace successfully!');
+      } else {
+        extensionApiRef.current = null;
+        setIsConnected(false);
+        setAccountAddress(null);
+        setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
       }
     } catch (err: any) {
       console.log('[WalletContext] Auto-reconnect did not complete silently:', err?.message || err);
       extensionApiRef.current = null;
+      setIsConnected(false);
+      setAccountAddress(null);
+      setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
       if (isWalletLockedError(err)) {
         setIsWalletLocked(true);
-      } else if (
-        err?.name === 'PermissionRejected' ||
-        err?.message?.toLowerCase().includes('reject') ||
-        err?.message?.toLowerCase().includes('denied')
-      ) {
-        setIsConnected(false);
-        setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
+        setWalletError('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password.');
+      } else if (isChannelShutdownError(err)) {
+        setWalletError('Lace extension background channel was closed or asleep. Click the Lace extension icon in your browser toolbar to wake it up, or refresh the page.');
       }
     } finally {
       isAutoReconnectingRef.current = false;
@@ -397,11 +405,16 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setConnectingStatus(null);
       } catch (err: any) {
         console.error('[WalletContext] Lace reconnect error:', err);
+        extensionApiRef.current = null;
+        setIsConnected(false);
+        setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
         setIsConnecting(false);
         setConnectingStatus(null);
         if (isWalletLockedError(err)) {
           setIsWalletLocked(true);
           setWalletError('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar, enter your password, then click Reconnect.');
+        } else if (isChannelShutdownError(err)) {
+          setWalletError('Lace extension background channel was closed or asleep. Please click the Lace extension icon in your browser toolbar to wake or unlock it, then refresh this page.');
         } else {
           setWalletError(err.message || 'Failed to reconnect to Lace.');
         }
@@ -422,9 +435,14 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       try {
         const targetNetwork = MIDNIGHT_CONFIG.networkId || 'preprod';
-        const api = await connectLaceWallet(walletName, targetNetwork, (st) => {
-          if (!isCancelledRef.current) setConnectingStatus(st);
-        });
+        const api = await connectLaceWallet(
+          walletName,
+          targetNetwork,
+          (st) => {
+            if (!isCancelledRef.current) setConnectingStatus(st);
+          },
+          { timeoutMs: 25000 }
+        );
 
         if (isCancelledRef.current) return;
 
@@ -521,9 +539,21 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.error('[WalletContext] Lace connection error:', error);
         setIsConnecting(false);
         setConnectingStatus(null);
+        extensionApiRef.current = null;
+        setIsConnected(false);
+        setAccountAddress(null);
+        setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
+
         if (isWalletLockedError(error)) {
           setIsWalletLocked(true);
-          setWalletError(error.message || 'Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
+          setWalletError(
+            error.message ||
+              'Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.'
+          );
+        } else if (isChannelShutdownError(error)) {
+          setWalletError(
+            'Lace extension background channel was closed or asleep. Please click the Lace extension icon in your browser toolbar to wake or unlock it, then refresh this page.'
+          );
         } else {
           setWalletError(error.message || 'Failed to connect to Lace wallet.');
         }
@@ -628,6 +658,12 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     removeStorageItem(STORAGE_KEYS.TNIGHT_BALANCE);
   }, []);
 
+  // Force reset wallet session and clear all persisted tokens
+  const resetWalletSession = useCallback(() => {
+    disconnectWallet();
+    console.log('[WalletContext] Stale wallet session forcibly reset and cleared.');
+  }, [disconnectWallet]);
+
   // Window-level guard against unhandled promise rejections from Lace extension background internals
   // (e.g. "Remote API with channel 'activity-channel' was shutdown: object can no longer be used.")
   useEffect(() => {
@@ -637,7 +673,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const reason = event?.reason;
       if (isChannelShutdownError(reason)) {
         console.warn(
-          '[WalletContext] Intercepted benign Lace background channel shutdown. Suppressing uncaught rejection and scheduling silent re-acquisition.'
+          '[WalletContext] Intercepted benign Lace background channel shutdown. Suppressing uncaught rejection.'
         );
         // Cancel browser default error logging (removes "Uncaught (in promise) t: Remote API with channel ... was shutdown")
         try {
@@ -646,11 +682,11 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         // Invalidate stale in-page API handle immediately so subsequent actions do not use dead proxy
         extensionApiRef.current = null;
-
-        if (mode === 'lace') {
-          const walletId = getStorageItem(STORAGE_KEYS.WALLET_ID) || 'mnLace';
-          performAutoReconnect(walletId);
-        }
+        setIsConnected(false);
+        setStorageItem(STORAGE_KEYS.CONNECTED, 'false');
+        setWalletError(
+          'Lace extension background channel was closed. Click the Lace extension icon in your browser toolbar to wake or unlock it, then refresh this page.'
+        );
       }
     };
 
@@ -658,7 +694,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => {
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
-  }, [mode, performAutoReconnect]);
+  }, []);
 
   // Periodic balance sync when in Lace mode
   useEffect(() => {
@@ -718,6 +754,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         connectWallet,
         reconnectWallet,
         disconnectWallet,
+        resetWalletSession,
         selectPresetIdentity,
         refreshBalances,
       }}

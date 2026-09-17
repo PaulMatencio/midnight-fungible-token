@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { addressToHex32 } from '@/src/domain/entities/address.vo';
 import { Header } from '@/src/presentation/components/Header';
 import { Sidebar, ActiveNavTab } from '@/src/presentation/components/Sidebar';
 import { MobileBottomNav } from '@/src/presentation/components/MobileBottomNav';
@@ -12,7 +13,7 @@ import { DashboardView } from '@/src/presentation/components/DashboardView';
 import { QueryViewer } from '@/src/presentation/components/QueryViewer';
 import { AccountSharesViewer } from '@/src/presentation/components/AccountSharesViewer';
 import { TransactionStepper } from '@/src/presentation/components/TransactionStepper';
-import { ActivityLog } from '@/src/presentation/components/ActivityLog';
+import { ActivityLog, isActivityForUser } from '@/src/presentation/components/ActivityLog';
 import { useFungibleToken } from '@/src/presentation/hooks/useFungibleToken';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useConfig } from '@/src/presentation/context/ConfigContext';
@@ -20,21 +21,12 @@ import { MIDNIGHT_CONFIG } from '@/src/infrastructure/config/midnight-config';
 import { formatBalance } from '@/src/presentation/utils/format';
 import {
   ShieldCheck,
-  Info,
-  Wallet,
   Loader2,
   Lock,
   RefreshCw,
-  Cpu,
-  Layers,
-  Activity,
-  Zap,
-  Server,
   ExternalLink,
   CheckCircle2,
   XCircle,
-  LayoutDashboard,
-  LogOut,
 } from 'lucide-react';
 
 export default function HomePage() {
@@ -62,6 +54,9 @@ export default function HomePage() {
     reconnectWallet,
     disconnectWallet,
     isConnecting,
+    activeIdentity,
+    dustBalance,
+    dustDisplay,
   } = useWallet();
 
   const {
@@ -99,8 +94,11 @@ export default function HomePage() {
     getBalanceOf,
     getRawLockedBalanceOf,
     getAllowance,
+    getAllowancesForSpender,
     resetContractCache,
     clearActivityLog,
+    dismissActivity,
+    clearPendingActivities,
     activeActionName,
     dismissTxStatus,
     userDerivedAccountHex,
@@ -110,6 +108,42 @@ export default function HomePage() {
   // Current connected user's spendable and locked token balance
   const userBalance = accountAddress ? getBalanceOf(accountAddress) : 0n;
   const lockedRawBalance = accountAddress ? getRawLockedBalanceOf(accountAddress) : 0n;
+
+  // Determine if the current active caller is the contract owner
+  const isOwner = useMemo(() => {
+    if (mode === 'test') {
+      return activeIdentity?.name === 'Alice' || Boolean(metadata.isCallerOwner);
+    }
+    if (metadata.isCallerOwner) return true;
+    if (!metadata.owner) return false;
+
+    const cleanOwner = metadata.owner.toLowerCase().replace(/^0x/, '');
+    const cleanDerived = (userDerivedAccountHex || '').toLowerCase().replace(/^0x/, '');
+    if (cleanDerived && cleanDerived === cleanOwner) return true;
+
+    if (accountAddress) {
+      try {
+        const rawHex = addressToHex32(accountAddress).toLowerCase().replace(/^0x/, '');
+        if (rawHex === cleanOwner) return true;
+      } catch {}
+    }
+    return false;
+  }, [mode, activeIdentity, metadata.isCallerOwner, metadata.owner, userDerivedAccountHex, accountAddress]);
+
+  // Automatically redirect non-owners away from the Executive Dashboard
+  useEffect(() => {
+    if (!isOwner && activeTab === 'dashboard') {
+      setActiveTab('actions');
+    }
+  }, [isOwner, activeTab]);
+
+  // Compute activities count strictly belonging to the connected wallet
+  const userActivityCount = useMemo(() => {
+    if (!accountAddress && !userDerivedAccountHex) return 0;
+    return activityLog.filter((a) =>
+      isActivityForUser(a, accountAddress, userDerivedAccountHex)
+    ).length;
+  }, [activityLog, accountAddress, userDerivedAccountHex]);
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 selection:bg-blue-600 selection:text-white transition-colors duration-200">
@@ -123,6 +157,7 @@ export default function HomePage() {
         onToggleCollapseDesktop={() => setIsDesktopCollapsed((prev) => !prev)}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         onOpenWalletModal={() => setIsWalletModalOpen(true)}
+        isOwner={isOwner}
       />
 
       {/* Main Content Area */}
@@ -130,102 +165,16 @@ export default function HomePage() {
         {/* Top Navbar */}
         <Header
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
-          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onOpenSettings={isOwner ? () => setIsSettingsModalOpen(true) : undefined}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
         />
 
-        {/* Main Workspace Body (padded bottom on mobile for sticky bottom bar) */}
-        <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 md:pb-8">
-          {/* Main Navigation Menu Bar (Directly below Header on every page) */}
-          <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 dark:border-slate-800/80 pb-3 overflow-x-auto no-scrollbar">
-            <div className="flex items-center gap-1 sm:gap-2">
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === 'dashboard'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
-                }`}
-              >
-                <LayoutDashboard className="w-4 h-4" />
-                <span>Dashboard</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('actions')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === 'actions'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
-                }`}
-              >
-                <Zap className="w-4 h-4" />
-                <span>Actions</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('ledger')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === 'ledger'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
-                }`}
-              >
-                <Layers className="w-4 h-4" />
-                <span>Ledger & Shares</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('activity')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === 'activity'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
-                }`}
-              >
-                <Activity className="w-4 h-4" />
-                <span>Activity ({activityLog.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('diagnostics')}
-                className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === 'diagnostics'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900'
-                }`}
-              >
-                <Cpu className="w-4 h-4" />
-                <span>Diagnostics</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setIsSettingsModalOpen(true)}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-300 text-xs font-medium transition-colors cursor-pointer shadow-sm dark:shadow-none"
-              >
-                <Server className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-                <span>Infra Config</span>
-              </button>
-
-              {isConnected && (
-                <button
-                  type="button"
-                  onClick={disconnectWallet}
-                  className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold text-rose-600 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 dark:text-rose-300 transition-all shadow-xs active:scale-95 cursor-pointer"
-                  title="Disconnect active wallet"
-                >
-                  <LogOut className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
-                  <span>Disconnect</span>
-                </button>
-              )}
-            </div>
-          </div>
+        {/* Main Workspace Body (padded bottom on mobile & tablets for sticky bottom bar) */}
+        <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 lg:pb-8">
 
           {/* Lace Wallet Locked Alert Banner */}
           {mode === 'lace' && isConnected && isWalletLocked && (
-            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-950/70 via-amber-900/40 to-amber-950/70 border border-amber-500/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-xs text-amber-200 shadow-xl shadow-amber-950/40 animate-in fade-in">
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-950/70 via-amber-900/40 to-amber-950/70 border border-amber-500/50 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 text-xs text-amber-200 shadow-xl shadow-amber-950/40 animate-in fade-in">
               <div className="flex items-start sm:items-center gap-3.5">
                 <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex-shrink-0 mt-0.5 sm:mt-0">
                   <Lock className="w-5 h-5" />
@@ -247,7 +196,7 @@ export default function HomePage() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 self-stretch sm:self-end md:self-center flex-shrink-0">
+              <div className="flex items-center gap-2 self-stretch sm:self-end lg:self-center flex-shrink-0">
                 <button
                   onClick={async () => {
                     try {
@@ -281,48 +230,7 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Mode Info Banners */}
-          {mode === 'lace' && !isConnected && (
-            <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-800/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-blue-200 shadow-sm">
-              <div className="flex items-center gap-2.5">
-                <Info className="w-4 h-4 text-cyan-400 flex-shrink-0" />
-                <span>
-                  <strong>Lace Wallet Mode Active:</strong> Connect your Lace Midnight extension to balance and prove transactions on {preset}.
-                </span>
-              </div>
-              <div className="flex items-center gap-2 self-stretch sm:self-auto">
-                <button
-                  onClick={async () => {
-                    try {
-                      await connectWallet();
-                    } catch {
-                      setIsWalletModalOpen(true);
-                    }
-                  }}
-                  disabled={isConnecting}
-                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-500/20 disabled:opacity-60 text-xs cursor-pointer"
-                >
-                  {isConnecting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin text-white" />
-                      <span>Connecting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Wallet className="w-4 h-4" />
-                      <span>Connect Lace Wallet</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => setMode('test')}
-                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition-colors text-xs cursor-pointer"
-                >
-                  Switch to Test Mode
-                </button>
-              </div>
-            </div>
-          )}
+
 
           {mode === 'test' && !isConnected && (
             <div className="p-4 rounded-2xl bg-indigo-950/20 border border-indigo-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-indigo-200 shadow-sm">
@@ -398,6 +306,8 @@ export default function HomePage() {
                 lockedRawBalance={lockedRawBalance}
                 userDerivedAccountHex={userDerivedAccountHex}
                 userDerivedAccountBech32={userDerivedAccountBech32}
+                dustBalance={dustBalance}
+                dustDisplay={dustDisplay}
                 txStatus={txStatus}
                 statusMessage={statusMessage}
                 currentTxHash={currentTxHash}
@@ -405,6 +315,7 @@ export default function HomePage() {
                 activeActionName={activeActionName}
                 callerAddress={accountAddress}
                 getAllowance={getAllowance}
+                getAllowancesForSpender={getAllowancesForSpender}
                 onTransfer={transfer}
                 onApprove={approve}
                 onTransferFrom={transferFrom}
@@ -417,6 +328,7 @@ export default function HomePage() {
                 onEmergencyWithdraw={emergencyWithdraw}
                 onAdminReallocate={adminReallocate}
                 initialActionTab={activeActionTab}
+                isOwner={isOwner}
               />
             </div>
           )}
@@ -457,6 +369,7 @@ export default function HomePage() {
                   metadata={metadata}
                   onQueryBalance={getBalanceOf}
                   onQueryAllowance={getAllowance}
+                  onQueryAllowancesForSpender={getAllowancesForSpender}
                 />
               </div>
             </div>
@@ -473,14 +386,19 @@ export default function HomePage() {
                   </p>
                 </div>
                 <span className="text-xs text-slate-400 font-mono">
-                  {activityLog.length} events logged
+                  {accountAddress ? `${userActivityCount} events for wallet` : 'No connected account'}
                 </span>
               </div>
 
               <ActivityLog
                 activities={activityLog}
                 activeContractAddress={config?.contractAddress || MIDNIGHT_CONFIG.contractAddress}
+                currentUserAddress={accountAddress}
+                userDerivedAddressHex={userDerivedAccountHex}
+                isOwner={isOwner}
                 onClearActivities={clearActivityLog}
+                onDismissActivity={dismissActivity}
+                onClearPendingActivities={clearPendingActivities}
               />
             </div>
           )}
@@ -660,7 +578,7 @@ export default function HomePage() {
         </main>
 
         {/* Footer */}
-        <footer className="border-t border-slate-900 bg-slate-950/80 py-5 text-center text-xs text-slate-500 font-mono hidden md:block">
+        <footer className="border-t border-slate-900 bg-slate-950/80 py-5 text-center text-xs text-slate-500 font-mono hidden lg:block">
           <p>Midnight Network • Compact Runtime • Progressive React 19 / Next.js DApp Client</p>
         </footer>
       </div>
@@ -670,6 +588,7 @@ export default function HomePage() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
+        isOwner={isOwner}
       />
 
       {/* Infrastructure Configuration Modal */}
@@ -682,6 +601,7 @@ export default function HomePage() {
       <WalletModal
         isOpen={isWalletModalOpen}
         onClose={() => setIsWalletModalOpen(false)}
+        userDerivedAccountHex={userDerivedAccountHex}
       />
     </div>
   );

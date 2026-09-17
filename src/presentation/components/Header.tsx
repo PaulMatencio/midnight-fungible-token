@@ -18,6 +18,7 @@ import {
   Settings,
   Sun,
   Moon,
+  X,
 } from 'lucide-react';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 import { useConfig } from '@/src/presentation/context/ConfigContext';
@@ -51,6 +52,8 @@ export const Header: React.FC<HeaderProps> = ({
     connectWallet,
     reconnectWallet,
     disconnectWallet,
+    resetWalletSession,
+    cancelConnecting,
     selectPresetIdentity,
   } = useWallet();
 
@@ -99,41 +102,44 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="border-b border-slate-200/80 bg-white/80 dark:border-slate-800/80 dark:bg-slate-950/80 backdrop-blur-xl sticky top-0 z-40 transition-colors duration-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
         {/* Brand & Mobile Hamburger */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {onToggleMobileSidebar && (
             <button
               onClick={onToggleMobileSidebar}
-              className="md:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-900 dark:border-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              className="lg:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-900 dark:border-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50 flex-shrink-0"
               aria-label="Open sidebar navigation"
             >
               <Menu className="w-5 h-5" />
             </button>
           )}
 
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 shrink-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20 shrink-0">
             <div className="w-full h-full bg-slate-50 dark:bg-slate-950 rounded-[10px] flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-cyan-500 dark:text-cyan-400" />
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-500 dark:text-cyan-400" />
             </div>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-base sm:text-lg text-slate-900 dark:text-white tracking-tight">Midnight</span>
-              <span className="text-[11px] sm:text-xs px-2 py-0.5 rounded-full font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                FungibleToken
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="font-bold text-sm sm:text-base lg:text-lg text-slate-900 dark:text-white tracking-tight truncate">
+                Midnight
+              </span>
+              <span className="text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 flex-shrink-0">
+                <span className="xs:hidden">ESCT</span>
+                <span className="hidden xs:inline">FungibleToken</span>
               </span>
             </div>
-            <p className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 font-mono hidden xs:block">
+            <p className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 font-mono hidden lg:block">
               Compact ZK Smart Contract
             </p>
           </div>
         </div>
 
         {/* Mode Switcher & Network & Wallet Controls */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Dual Mode Switcher Pill */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-xs shadow-inner">
+        <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
+          {/* Dual Mode Switcher Pill (Desktop/Tablet; on mobile available in sidebar) */}
+          <div className="hidden sm:flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-xs shadow-inner">
             <button
               onClick={() => setMode('lace')}
               className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-lg font-medium transition-all ${
@@ -204,11 +210,11 @@ export const Header: React.FC<HeaderProps> = ({
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
 
-          {/* Settings Trigger Icon */}
+          {/* Settings Trigger Icon (Hidden on mobile; accessible via Bottom Nav & Sidebar) */}
           {onOpenSettings && (
             <button
               onClick={onOpenSettings}
-              className="p-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+              className="hidden sm:flex p-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
               title="Midnight Infrastructure Settings"
               aria-label="Infrastructure Settings"
             >
@@ -232,7 +238,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Balances */}
           {isConnected && (
-            <div className="hidden md:flex items-center gap-2">
+            <div className="hidden lg:flex items-center gap-2">
               {mode === 'lace' && isWalletLocked ? (
                 <div
                   className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs text-amber-600 dark:text-amber-300 font-medium shadow-sm"
@@ -360,15 +366,15 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               </div>
 
-              {/* Dedicated Disconnect Button */}
+              {/* Dedicated Disconnect Button (Hidden on mobile; quick logout icon inside pill is used) */}
               <button
                 type="button"
                 onClick={disconnectWallet}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 dark:text-rose-300 transition-all shadow-xs active:scale-95 flex-shrink-0"
+                className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 dark:text-rose-300 transition-all shadow-xs active:scale-95 flex-shrink-0"
                 title="Disconnect wallet"
               >
                 <LogOut className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
-                <span className="hidden sm:inline">Disconnect</span>
+                <span className="hidden lg:inline">Disconnect</span>
               </button>
             </div>
           ) : (
@@ -377,20 +383,34 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={handleDirectConnect}
                 disabled={isConnecting}
-                className="flex items-center gap-2 px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white shadow-lg shadow-blue-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white shadow-lg shadow-blue-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60 flex-shrink-0"
               >
                 {isConnecting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>Connecting...</span>
+                    <span className="hidden xs:inline">Connecting...</span>
+                    <span className="xs:hidden">...</span>
                   </>
                 ) : (
                   <>
-                    <Wallet className="w-4 h-4 text-cyan-200" />
-                    <span>{mode === 'lace' ? 'Connect Wallet' : 'Connect Test Wallet'}</span>
+                    <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-200" />
+                    <span className="hidden xs:inline">{mode === 'lace' ? 'Connect Wallet' : 'Connect Test'}</span>
+                    <span className="xs:hidden">Connect</span>
                   </>
                 )}
               </button>
+
+              {isConnecting && (
+                <button
+                  type="button"
+                  onClick={cancelConnecting}
+                  className="p-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
+                  title="Cancel connecting attempt"
+                  aria-label="Cancel connecting"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
 
               {/* Options / Settings Trigger */}
               <button

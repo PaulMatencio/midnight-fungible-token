@@ -113,7 +113,9 @@ export function isChannelShutdownError(err: any): boolean {
     combined.includes('extension context invalidated') ||
     combined.includes('receiving end does not exist') ||
     combined.includes('message port closed') ||
-    combined.includes('port closed before a response was received')
+    combined.includes('port closed before a response was received') ||
+    combined.includes('could not establish connection') ||
+    combined.includes('disconnected port')
   );
 }
 
@@ -299,7 +301,7 @@ export async function connectLaceWallet(
   onStatusChange?.('Waiting for Lace authorization... (please check the Lace popup window)');
   console.log(`[Midnight Lace Connector] Calling connect('${networkId}') on '${targetKey}'...`);
 
-  const timeoutMs = options?.timeoutMs || 120000;
+  const timeoutMs = options?.timeoutMs || 25000;
   let timer: any = null;
 
   try {
@@ -313,7 +315,11 @@ export async function connectLaceWallet(
 
     const timeoutPromise = new Promise((_, reject) => {
       timer = setTimeout(() => {
-        reject(new Error('Connection timed out. Please check if the Lace popup window is open and approved.'));
+        reject(
+          new Error(
+            'Connection timed out. If the Lace popup did not open, please click the Lace extension icon in your browser toolbar to unlock or wake it, then refresh this page.'
+          )
+        );
       }, timeoutMs);
     });
 
@@ -366,7 +372,12 @@ export async function connectLaceWallet(
       throw new Error('Your Lace wallet is locked. Please click the Lace extension icon in your browser toolbar to unlock it with your password, then try connecting again.');
     }
 
-    // 3. Specific message or reason from Lace
+    // 3. Channel shutdown / extension asleep or invalidated
+    if (isChannelShutdownError(err)) {
+      throw new Error('Lace extension background channel was closed or asleep. Please click the Lace extension icon in your browser toolbar to wake or unlock it, then refresh this page.');
+    }
+
+    // 4. Specific message or reason from Lace
     const msg = err?.reason || err?.message || 'Failed to connect to Lace wallet';
     throw new Error(msg);
   }
@@ -962,8 +973,8 @@ export function createLaceMidnightProvider(api: any, nodeRpcUrl?: string) {
         if (submitFn && selectedMethodName) {
           console.log(`[LaceMidnightProvider] Invoking ${selectedMethodName} on connected wallet API...`);
 
-          // Formats to attempt: ONLY string hex or Uint8Array.
-          // CRITICAL: NEVER pass arbitrary JS objects to Lace connector (causes Buffer.from TypeError).
+          // Formats to attempt: hex string, 0x-hex string, or Uint8Array bytes.
+          // NEVER pass arbitrary JS objects to Lace connector (causes Buffer.from TypeError).
           const payloadsToTry: (string | Uint8Array)[] = [];
           if (cleanHex) payloadsToTry.push(cleanHex);
           if (withPrefixHex && withPrefixHex !== cleanHex) payloadsToTry.push(withPrefixHex);
@@ -976,6 +987,7 @@ export function createLaceMidnightProvider(api: any, nodeRpcUrl?: string) {
             }
           }
 
+          let firstErr: any = null;
           let lastErr: any = null;
           let laceSucceeded = false;
           let laceResult: any = null;
@@ -989,18 +1001,21 @@ export function createLaceMidnightProvider(api: any, nodeRpcUrl?: string) {
                 console.log(`[LaceMidnightProvider] ${selectedMethodName} succeeded! Returned:`, laceResult);
                 break;
               } catch (err: any) {
+                if (!firstErr) firstErr = err;
                 lastErr = err;
-                console.warn(`[LaceMidnightProvider] ${selectedMethodName} attempt failed:`, err?.message || err);
+                console.warn(`[LaceMidnightProvider] ${selectedMethodName} attempt failed:`, err?.reason || err?.message || err);
 
                 // If user explicitly rejected or cancelled in Lace, immediately stop and bubble up
                 const errStr = `${err?.name || ''} ${err?.message || ''} ${err?.reason || ''} ${err?.info || ''}`.toLowerCase();
                 if (
                   err?.name === 'PermissionRejected' ||
                   err?.code === 'Rejected' ||
-                  errStr.includes('reject') ||
-                  errStr.includes('denied') ||
-                  errStr.includes('cancel') ||
-                  errStr.includes('decline')
+                  err?.code === -32000 ||
+                  errStr.includes('user rejected') ||
+                  errStr.includes('permission rejected') ||
+                  errStr.includes('user declined') ||
+                  errStr.includes('user cancelled') ||
+                  errStr.includes('user canceled')
                 ) {
                   throw err;
                 }
@@ -1013,6 +1028,7 @@ export function createLaceMidnightProvider(api: any, nodeRpcUrl?: string) {
               laceResult = await submitFn(tx);
               laceSucceeded = true;
             } catch (mockErr: any) {
+              firstErr = mockErr;
               lastErr = mockErr;
             }
           }
@@ -1037,12 +1053,66 @@ export function createLaceMidnightProvider(api: any, nodeRpcUrl?: string) {
             if (fallbackTxId) {
               return fallbackTxId;
             }
-            return withPrefixHex ? withPrefixHex.slice(0, 66) : '0x' + '00'.repeat(32);
+            if (withPrefixHex && withPrefixHex.length >= 66 && !/^0x0{64}$/.test(withPrefixHex.slice(0, 66))) {
+              return withPrefixHex.slice(0, 66);
+            }
+            throw new Error('Transaction was submitted by wallet but no valid transaction ID could be resolved.');
           }
 
-          if (lastErr) {
-            console.error('[LaceMidnightProvider] Wallet submission failed:', lastErr);
-            throw lastErr;
+          if (!laceSucceeded) {
+            const primaryErr = firstErr || lastErr;
+            const errStr = `${primaryErr?.name || ''} ${primaryErr?.message || ''} ${primaryErr?.reason || ''} ${primaryErr?.info || ''}`.toLowerCase();
+            const isExplicitUserRejection =
+              primaryErr?.name === 'PermissionRejected' ||
+              primaryErr?.code === 'Rejected' ||
+              primaryErr?.code === -32000 ||
+              errStr.includes('user rejected') ||
+              errStr.includes('permission rejected') ||
+              errStr.includes('user declined') ||
+              errStr.includes('user cancelled') ||
+              errStr.includes('user canceled');
+
+            if (isExplicitUserRejection) {
+              console.warn('[LaceMidnightProvider] User declined or cancelled transaction in wallet.');
+              throw primaryErr;
+            }
+
+            console.error('[LaceMidnightProvider] Wallet submission failed:', primaryErr);
+
+            // Attempt direct node fallback if payload available
+            const payloadHex = withPrefixHex || (cleanHex ? `0x${cleanHex}` : '');
+            if (payloadHex) {
+              try {
+                if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+                  const res = await window.fetch('/api/submit-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      txHex: payloadHex,
+                      nodeUrl: nodeRpcUrl || undefined,
+                    }),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.success && data.txId) {
+                      console.log('[LaceMidnightProvider] Direct node submission via /api/submit-tx succeeded! Extrinsic hash:', data.txId);
+                      return fallbackTxId || data.txId;
+                    }
+                  }
+                }
+              } catch (apiErr: any) {
+                console.warn('[LaceMidnightProvider] /api/submit-tx fallback failed:', apiErr?.message || apiErr);
+              }
+            }
+
+            // CRITICAL: NEVER return fallbackTxId on failed submission!
+            // Returning a txId when submission failed causes watchForTxData to poll the indexer forever.
+            const failureReason =
+              primaryErr?.reason ||
+              (primaryErr?.message && primaryErr.message !== 'Error' ? primaryErr.message : null) ||
+              primaryErr?.info ||
+              'Transaction submission failed or was declined in Lace wallet.';
+            throw new Error(failureReason, { cause: primaryErr });
           }
         }
 
